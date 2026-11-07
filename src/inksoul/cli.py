@@ -167,7 +167,8 @@ def cmd_corpus(args) -> int:
         if rep.min_pair:
             print(f"最不像：{rep.min_pair['a']} ↔ {rep.min_pair['b']} = {rep.min_pair['similarity']:.3f}")
         print("每篇与同侪的平均相似度：")
-        for w in rep.works[:10]:
+        limit = args.top if getattr(args, "top", 0) > 0 else 10
+        for w in rep.works[:limit]:
             print(f"  {w['name']}：{w['mean_similarity_to_others']:.3f}（{w['clauses']} 小句）")
         for note in rep.notes[:3]:
             print(f"注：{note}")
@@ -476,6 +477,7 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("corpus", help="跨作品同质度（两两骨架相似度）")
     c.add_argument("target", help="目录（比较其中所有 .txt）或多个文件")
     c.add_argument("--json", action="store_true", help="输出 JSON")
+    c.add_argument("--top", type=int, default=0, help="每篇列表最多显示 N 条（默认 10）")
     c.set_defaults(func=cmd_corpus)
 
     gt = sub.add_parser("gate", help="对一篇现成稿子跑文风闸门（不生成）")
