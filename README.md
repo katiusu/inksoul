@@ -52,6 +52,31 @@ pip install -e ".[jieba]"
 
 预发布说明见 [release/RELEASE_NOTES-0.2.0rc1.md](release/RELEASE_NOTES-0.2.0rc1.md)。
 
+## 作为 DSH 插件安装（推荐给 Agent 用）
+
+`plugin/` 是可装进 DeepSeek Harness 的插件包 `dsh-inksoul`：Python 源码随包分发（`plugin/python/inksoul`），
+所以不需要 `pip install inksoul`，插件自己把 `PYTHONPATH` 指过去。
+
+```bash
+dsh plugin --profile web add ./plugin     # 装进 profile
+dsh --profile web --dump-config | grep -A2 inksoul   # 确认已进组合树
+```
+
+装完（或重启 dsh web 后）模型会多出四个一等工具：
+
+| 工具 | 作用 |
+| --- | --- |
+| `inksoul_doctor` | 环境自检（Python / 架构 / jieba / 模型配置） |
+| `inksoul_analyze` | 单篇句法骨架指纹、句长分布、与基线距离（`text` 走 stdin，`path` 读文件） |
+| `inksoul_corpus` | 目录内多篇两两骨架相似度 |
+| `inksoul_agent` | 规划→多候选→复核→修订→文风闸门（分钟级） |
+
+外加一段 `inksoul:policy` 提示段（order 9600），告诉模型结论该怎么表述：相似度只说骨架复用、
+偏离基线不推非人类、闸门未 PASS 不当作定稿。
+
+插件配置在 `plugin/cordis.patch.yml`：`python`（空=用 `python3` 或 `INKSOUL_PYTHON`）、
+`workdir`、`timeoutMs`、`maxOutputChars`、`enabled`。改了 `src/inksoul` 之后跑
+`bash plugin/sync-python.sh` 把源码同步进插件包。
 ## 快速开始
 
 ```bash

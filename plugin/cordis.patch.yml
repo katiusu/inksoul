@@ -1,0 +1,14 @@
+# dsh-inksoul bundle 层：登记插件本体 + 默认配置。
+#
+# 工具注册发生在插件 apply() 里（ctx.inject(['tools'])），本文件只负责把插件挂进宿主组合。
+- insert:
+    - id: inksoul
+      name: 'dsh-inksoul'
+      config:
+        enabled: true
+        # 空 = 用 python3（也可设 INKSOUL_PYTHON 环境变量）
+        python: ''
+        # 空 = 用宿主 cwd；需要固定项目根目录时填绝对路径
+        workdir: ''
+        timeoutMs: 600000
+        maxOutputChars: 20000
