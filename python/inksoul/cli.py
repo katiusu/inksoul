@@ -362,6 +362,40 @@ def _has(mod: str) -> bool:
         return False
 
 
+def cmd_gate(args) -> int:
+    """对一篇现成稿子跑文风闸门（不生成、不调用模型）。"""
+    from .agent import GATE_TIMEOUT, run_gate
+    from .config import ConfigError, resolve_gate
+
+    path = Path(args.target).expanduser()
+    if not path.is_file():
+        print(f"错误：找不到文件 {path}", file=sys.stderr)
+        return 2
+    spec = (args.gate_cmd or args.preset or "").strip()
+    if not spec:
+        print("错误：需要 --preset（deslop/full/essay/zhuque）或 --cmd <命令>", file=sys.stderr)
+        return 2
+    try:
+        cmd = resolve_gate(spec)
+    except ConfigError as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return 2
+    if not cmd:
+        print("闸门已关闭（off），跳过。")
+        return 0
+    timeout = float(args.timeout or 0) or GATE_TIMEOUT
+    res = run_gate(cmd, path, timeout=timeout)
+    print(f"status: {res.status}｜rc={res.rc}｜verdict={res.verdict or '-'}")
+    if res.findings:
+        print("命中：")
+        for line in res.findings:
+            print("  " + line)
+    if res.receipt:
+        print(res.receipt)
+    if res.output and not res.findings:
+        print(res.output.strip()[-1500:])
+    return 0
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="inksoul", description="InkSoul · 面向 AI Agent 的中文文学创作增强工具")
     p.add_argument("--version", action="version", version=f"inksoul {__version__}")
@@ -443,6 +477,14 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("target", help="目录（比较其中所有 .txt）或多个文件")
     c.add_argument("--json", action="store_true", help="输出 JSON")
     c.set_defaults(func=cmd_corpus)
+
+    gt = sub.add_parser("gate", help="对一篇现成稿子跑文风闸门（不生成）")
+    gt.add_argument("target", help="稿子路径")
+    gt.add_argument("--preset", default="", choices=["", "deslop", "full", "essay", "zhuque", "off"],
+                    help="闸门预设：deslop（默认规范）/full（全部闸门）/essay（作文）/zhuque（朱雀）")
+    gt.add_argument("--cmd", dest="gate_cmd", default="", help="自定义命令（{file} 换成正文路径）")
+    gt.add_argument("--timeout", type=float, default=0, help="超时秒数（默认 300）")
+    gt.set_defaults(func=cmd_gate)
 
     d = sub.add_parser("doctor", help="环境自检")
     d.set_defaults(func=cmd_doctor)

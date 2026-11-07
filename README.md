@@ -1,146 +1,90 @@
-<div align="center">
-
 # InkSoul
 
-**面向 AI Agent 的中文文学创作增强工具**
+**给 AI Agent 的中文写作插件。** 模型写中文时，手里通常只有「感觉」；InkSoul 给它机械线索：
+能测句法骨架、能比同质度、能过文风闸门、能自己改到达标。
 
-从句法骨架层面诊断「机械复用」，把诊断结果变成可执行的写作策略与局部修订建议。
+```
+npm:      dsh-inksoul
+harness:  DeepSeek Harness（DSH）
+入口:     lib/index.js  ← 四个诊断类工具 + 一个生成闭环 + 一段写作规范提示
+引擎:     python/inksoul（随包分发，零第三方依赖）
+```
 
-[![tests](https://img.shields.io/badge/tests-184%20passed-brightgreen)](https://github.com/katiusu/inksoul)
-[![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://github.com/katiusu/inksoul)
-[![deps](https://img.shields.io/badge/core%20deps-0-informational)](https://github.com/katiusu/inksoul)
-[![version](https://img.shields.io/badge/version-0.2.0rc1-orange)](https://github.com/katiusu/inksoul/releases/tag/v0.2.0-rc.1)
-[![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
-
-</div>
-
-## 这是什么
-
-InkSoul 不是「AI 检测器」。它把一篇中文文稿拆成小句，提取**句法骨架**（词性 + 依赖关系 + 句式特征），
-回答一个具体问题：*这篇稿子是不是在用少数几个句式反复套模板？*
-
-- **不输出「AI 概率」**，也**不输出单一总分**——只给可解释的分布与问题清单（ADR-2）
-- 核心**零依赖**：`jieba` 是可选分词后端，缺失时有中文错误提示与降级路径
-- 生成侧兼容 OpenAI 格式 API，也可完全离线只做分析
-- 诊断结果直接接进写作闭环：规划 → 候选 → 择优 → 复核 → 修订 → 定稿闸门
-
-## 核心能力
-
-| 层 | 能力 |
-|---|---|
-| 文本处理 | 段落/句子/小句切分、jieba 分词与词性、归一符号体系（含 `把/被/只是/没有` 消歧） |
-| 句法指纹 | 加权编辑距离、星形结构簇、骨架复用率、模式熵、J1–J3 修辞判据、体裁基线 |
-| 跨作品相似 | 语料级骨架余弦：模板拼接 vs 人类写作的分离度（实测 0.902 vs 0.136） |
-| 分布分析 | 句法多样性、文体（TTR/MTLD/MATTR/MSTTR/HDD）、叙事（视角/场景/对话节拍/信息密度） |
-| 文体距离 | Burrows&apos; Delta（字频 z 标准化，同集内可比的风格距离矩阵） |
-| 审阅 | 四类问题（机械复用/相邻雷同/句首重复/情绪直陈），带证据与建议，**无总分** |
-| 生成 | OpenAI 兼容客户端、文体规划、多候选择稿、局部修订、复核 |
-| Agent | 一条命令跑完闭环；**PTC 工具面**让模型写程序调用 `read_prev`/`lookup_bible`/`measure`/`run_gate` |
-
-## 安装
+## 装
 
 ```bash
-# 预发布 wheel（推荐当前版本）
-pip install inksoul-0.2.0rc1-py3-none-any.whl
+dsh plugin --profile web add dsh-inksoul      # 从 npm 装
+dsh plugin --profile web add /path/to/repo    # 从本地目录装
+```
 
-# 或从源码可编辑安装
+装完重启 dsh web，模型工具面里就会多出下面这些工具（都叫 `inksoul_*`），并在系统提示里附带一段
+`inksoul:policy` 写作规范。**不需要** `pip install inksoul`，插件靠 `PYTHONPATH` 把包内源码指过去；
+`jieba` 缺失只降级不分词，不会崩。
+
+## 工具
+
+| 工具 | 什么时候用 | 耗时 |
+| --- | --- | --- |
+| `inksoul_analyze` | 想量化一篇中文文本的句法骨架、句长分布、与体裁基线的距离 | 秒级 |
+| `inksoul_corpus` | 一批稿子之间两两骨架相似度——判断是不是同一副骨架反复复用 | 秒级 |
+| `inksoul_gate` | 对定稿跑文风闸门（去 AI 味精查），拿回逐条命中项 | 30–90 秒 |
+| `inksoul_agent` | 要真的写出正文：规划→多候选→复核→修订→闸门，闭环 | 分钟级 |
+| `inksoul_doctor` | 环境自检；任何报错先跑它 | 1 秒 |
+
+### 为什么是插件而不是技能
+
+技能只能塞说明书，还得先在本机装好 CLI、配好 PATH；插件把引擎一起打进 npm 包，
+模型拿到的是一等工具：直接调、直接拿结构化结果、失败也能读懂原因。
+
+### 结论口径（写进 `inksoul:policy`，照着说）
+
+- 骨架相似度高 → 说「骨架复用明显」，不说「抄袭」；
+- 偏离基线 → 说「偏离该基线分布」，不推「非人类」；
+- 闸门未 PASS → 不当定稿交付，按命中条目改完重跑。
+
+## 配置
+
+`cordis.patch.yml` 里的默认片段：
+
+```yaml
+- id: inksoul
+  name: dsh-inksoul
+  config:
+    enabled: true
+    python: ''        # 留空 = python3 或 INKSOUL_PYTHON
+    workdir: ''       # 留空 = 进程 cwd
+    timeoutMs: 600000
+    maxOutputChars: 20000
+```
+
+`inksoul_agent` 要调模型，配置在 `~/.dsh/inksoul/config.json`（或 `~/.inksoul/config.json`）：
+
+```json
+{ "model": { "base_url": "https://api.deepseek.com/v1", "api_key": "sk-…", "model": "deepseek-chat" } }
+```
+
+## 引擎与 CLI
+
+引擎是纯 Python（`src/inksoul`，装进包时复制到 `python/inksoul`），也仍可单独当 CLI 用：
+
+```bash
 pip install -e .
-
-# 可选：中文分词后端
-pip install -e ".[jieba]"
+inksoul doctor
+inksoul analyze draft.txt --json
+inksoul gate draft.txt --preset deslop
+inksoul agent "写一段雨夜重逢" --preset deai --out draft.md
 ```
 
-预发布说明见 [release/RELEASE_NOTES-0.2.0rc1.md](release/RELEASE_NOTES-0.2.0rc1.md)。
+引擎细节（指纹算法、基线、PTC 工具面、闸门接线）见 [ENGINE.md](ENGINE.md)。
 
-## 作为 DSH 插件安装（推荐给 Agent 用）
-
-`plugin/` 是可装进 DeepSeek Harness 的插件包 `dsh-inksoul`：Python 源码随包分发（`plugin/python/inksoul`），
-所以不需要 `pip install inksoul`，插件自己把 `PYTHONPATH` 指过去。
+## 开发
 
 ```bash
-dsh plugin --profile web add ./plugin     # 装进 profile
-dsh --profile web --dump-config | grep -A2 inksoul   # 确认已进组合树
+pytest -q                      # 引擎测试
+sh scripts/sync-python.sh      # 改完 src/ 后同步进插件包（prepack 也会跑）
+npm pack --dry-run             # 看发布内容
 ```
-
-装完（或重启 dsh web 后）模型会多出四个一等工具：
-
-| 工具 | 作用 |
-| --- | --- |
-| `inksoul_doctor` | 环境自检（Python / 架构 / jieba / 模型配置） |
-| `inksoul_analyze` | 单篇句法骨架指纹、句长分布、与基线距离（`text` 走 stdin，`path` 读文件） |
-| `inksoul_corpus` | 目录内多篇两两骨架相似度 |
-| `inksoul_agent` | 规划→多候选→复核→修订→文风闸门（分钟级） |
-
-外加一段 `inksoul:policy` 提示段（order 9600），告诉模型结论该怎么表述：相似度只说骨架复用、
-偏离基线不推非人类、闸门未 PASS 不当作定稿。
-
-插件配置在 `plugin/cordis.patch.yml`：`python`（空=用 `python3` 或 `INKSOUL_PYTHON`）、
-`workdir`、`timeoutMs`、`maxOutputChars`、`enabled`。改了 `src/inksoul` 之后跑
-`bash plugin/sync-python.sh` 把源码同步进插件包。
-## 快速开始
-
-```bash
-inksoul doctor                        # 环境自检（jieba / 配置 / 模型 Key）
-inksoul analyze 稿子.txt               # 句法指纹 + 文体 + 叙事 + 审查
-inksoul analyze 稿子.txt --json out.json
-inksoul plan "雨夜重逢" --genre 小说     # 只出写作规划，不生成正文
-inksoul corpus 作品目录/               # 跨作品骨架相似度
-```
-
-## Agent 模式
-
-一条命令跑完「规划 → N 候选 → 择优 → 复核 → 局部修订 → 回滚 → 定稿闸门」：
-
-```bash
-inksoul agent "雨夜重逢" --preset long --out draft.txt
-inksoul agent "雨夜重逢" --tools --tool-mode ptc --out draft.txt
-inksoul --list-presets
-```
-
-| 预设档 | 用途 | 候选 | 闸门 |
-|---|---|---|---|
-| `draft` | 快速起稿 | 2 | — |
-| `long` | 长篇单章 | 3 | deslop |
-| `short` | 短篇 | 3 | deslop |
-| `rewrite` | 改写重写 | 2 | — |
-| `publish` | 上架前定稿 | 4 | deslop |
-| `cover` | 封面文案 | 3 | — |
-| `deai` | 去 AI 味一条龙 | 2 | deslop |
-
-**定稿闸门**：默认只在定稿后跑一次（未过则按命中条目整篇重写一次），不逐候选、不逐轮，避免 40 s × 6 的浪费。
-关掉用 `--gate off`，换成自定义脚本用 `--gate 'bash my_check.sh {file}'`。
-
-## 设计原则
-
-1. **线索不是判定**：所有阈值未人工标定，输出帮助人判断，不替代人判断。
-2. **可复现优先**：同一文本同一配置必须给出同一结果；抽样、降级都写进报告的 `notes`。
-3. **诚实记账**：文档里写了但代码没有的指标，一律标「未实现」；口径与论文不同的地方主动披露。
-
-## 项目结构
-
-```text
-src/inksoul/     分析算核（文本处理 / 指纹 / 多样性 / 文体 / 审阅 / 生成 / Agent / PTC）
-tests/           184 个单元测试（`python3 -m unittest discover -s tests -p "test_*.py" -t .`）
-docs/            17 份设计、使用、接口、局限、论文对照文档
-research/        文献题录、精读笔记、论文对齐审计
-release/         wheel / sdist / 版本说明
-```
-
-## 文档
-
-- [docs/project_overview.md](docs/project_overview.md) — 项目总览
-- [docs/usage.md](docs/usage.md) — 命令行用法
-- [docs/API_SPEC.md](docs/API_SPEC.md) — Python API 与 JSON 报告格式
-- [docs/agent_mode.md](docs/agent_mode.md) — Agent 模式、预设档、工具面、闸门
-- [docs/paper_alignment.md](docs/paper_alignment.md) — 论文 ↔ 实现对照（含口径偏差披露）
-- [docs/limitations.md](docs/limitations.md) — **已知局限，务必先读**
-
-## 验证状态
-
-- 单元测试：**184 通过**（`Ran 184 tests in ~7s`）
-- 规模：40 万字 analyze 约 16.5 s（两两相似度与簇内变异均按抽样估计，notes 会写明）
-- **未验证**：真实模型 API 的端到端生成（本机无 Key）；阈值的人工标定
 
 ## 许可
 
-MIT。第三方论文全文不入库（`research/papers/*.pdf` 已在 `.gitignore` 中），只保留题录与索引。
+MIT。

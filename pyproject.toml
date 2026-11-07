@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "inksoul"
-version = "0.2.0rc1"
-description = "InkSoul —— 面向 AI Agent 的中文文学创作增强插件（句法指纹 + 文体诊断 + 生成控制）"
+version = "0.3.0"
+description = "InkSoul 引擎 —— 由 dsh-inksoul 插件内嵌的中文写作引擎（句法指纹 + 文体诊断 + 文风闸门 + 生成闭环）"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}

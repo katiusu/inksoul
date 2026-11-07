@@ -1,0 +1,61 @@
+{
+  "name": "dsh-inksoul",
+  "version": "0.3.0",
+  "description": "InkSoul —— 给 AI Agent 的中文写作插件：句法骨架诊断、同质对比、文风闸门与生成闭环",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "lib",
+    "python",
+    "cordis.patch.yml",
+    "README.md",
+    "ENGINE.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "sync-python": "sh scripts/sync-python.sh",
+    "prepack": "sh scripts/sync-python.sh"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "agent",
+    "chinese",
+    "writing",
+    "stylistics",
+    "syntax",
+    "中文写作",
+    "文风"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/katiusu/inksoul.git"
+  },
+  "homepage": "https://github.com/katiusu/inksoul#readme",
+  "bugs": {
+    "url": "https://github.com/katiusu/inksoul/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.1.7-rc.1 || ^0.2.0-rc.1"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "engines": {
+      "dsh": ">=0.2.0-rc.1"
+    }
+  }
+}

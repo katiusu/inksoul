@@ -9,3 +9,4 @@ experiment/results/*.json
 # 第三方论文全文（版权 + 体积），只保留题录与索引
 research/papers/*.pdf
 research/papers/*.xml
+dsh-inksoul-*.tgz
