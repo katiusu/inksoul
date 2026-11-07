@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-__version__ = "0.5.1"  # 与 pyproject.toml 的 project.version 保持同步
+__version__ = "0.6.0"  # 与 pyproject.toml 的 project.version 保持同步
 SCHEMA_VERSION = "inksoul/1"
 
 from .errors import (  # noqa: E402,F401

@@ -415,6 +415,15 @@ def cmd_gate(args) -> int:
         print(res.output.strip()[-1500:])
     return 0
 
+STYLE_ACTIONS = {
+    "reuse_rate": "骨架复用率超标 → 合并短句、改变主谓宾与状语位置，别一个动作一句",
+    "mean_pairwise_similarity": "句间骨架相似度超标 → 换相邻句的衔接（描写/心理/动作交替）",
+    "long_sentence_share": "长句占比低 → 把两三个短句用逗号串成一句，去掉句号切分",
+    "conj_per_kchar": "连接词少 → 补因果/转折/让步连接（因为、可、虽、于是）",
+    "information_density_mean": "信息密度低 → 细节落到具体物件与动作，别写抽象概括",
+    "dialogue_ratio": "对白少 → 在场人物给台词，用对白推进而不是叙述转述",
+}
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="inksoul", description="InkSoul · 面向 AI Agent 的中文文学创作增强工具")
     p.add_argument("--version", action="version", version=f"inksoul {__version__}")
@@ -513,6 +522,11 @@ def build_parser() -> argparse.ArgumentParser:
     mk.add_argument("--gate", action="store_true", help="按内置闸门出 VERDICT/RECEIPT")
     mk.set_defaults(func=cmd_markers)
 
+    st = sub.add_parser("style", help="段级风格距离（六维 z + 该改什么）")
+    st.add_argument("target", help="段落文件或整章文件")
+    st.add_argument("--threshold", type=float, default=1.30, help="超阈阈值（人类 p90 = 1.29）")
+    st.set_defaults(func=cmd_style)
+
     d = sub.add_parser("doctor", help="环境自检")
     d.set_defaults(func=cmd_doctor)
     return p
@@ -555,6 +569,42 @@ def cmd_markers(args) -> int:
         print("note: " + n)
     return 0
 
+
+def cmd_style(args) -> int:
+    """段级风格距离：只回 distance + 六维 z + 该改什么（轻量，省上下文）。"""
+    from .style_pool import distance_of_text, dim_report, load_pool, metrics_of, _analyzer
+
+    path = Path(args.target).expanduser()
+    if path.is_file():
+        text = _read_text(path)
+        name = path.name
+    else:
+        raise InkSoulError(f"路径不存在：{path}", hint="给出段落文件或整章文件")
+    pool = load_pool()
+    if not pool:
+        print("错误：缺少人类风格池 data/human_style_zh.json", file=sys.stderr)
+        return 2
+    vec = metrics_of(text, _analyzer())
+    d = distance_of_text(text, pool)
+    thr = float(args.threshold)
+    if d is None:
+        print("%s｜字数 %d｜句子太少，无法算距离（<60 字）" % (name, len(text)))
+        print("VERDICT: SHORT")
+        return 0
+    rows = dim_report(vec, pool)
+    over = [r for r in rows if abs(r["z"]) >= 2.0]
+    verdict = "NEAR" if d <= thr else ("FAR" if d > thr + 0.6 else "OFF")
+    print("%s｜字数 %d｜距离 %.2f（人类 p90 %.2f，阈值 %.2f）→ %s"
+          % (name, len(text), d, 1.29, thr, verdict))
+    for r in rows:
+        mark = " ↑超标" if r["z"] >= 2.0 else (" ↓偏低" if r["z"] <= -2.0 else "")
+        print("  %-12s %6.2f  mean %5.2f  z %+.2f%s"
+              % (r["label"], r["value"], r["mean"], r["z"], mark))
+    if over:
+        acts = [STYLE_ACTIONS.get(r["dim"], r["label"]) for r in over[:2]]
+        print("动作：" + "；".join(acts))
+    print("VERDICT: %s" % verdict)
+    return 0
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "inksoul"
-version = "0.5.1"
+version = "0.6.0"
 description = "InkSoul 引擎 —— 由 dsh-inksoul 插件内嵌的中文写作引擎（句法指纹 + 文体诊断 + 文风闸门 + 生成闭环）"
 readme = "README.md"
 requires-python = ">=3.9"

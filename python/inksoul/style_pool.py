@@ -203,6 +203,6 @@ def distance_of_text(text, pool=None, analyzer=None):
     if not text or len(text.strip()) < 60:
         return None
     try:
-        return distance(metrics_of(text, analyzer or _analyzer()), pool)
+        return distance(metrics_of(text, analyzer or _analyzer()), pool or load_pool())
     except Exception:  # noqa: BLE001 - 覆盖缺失时静默降级
         return None
