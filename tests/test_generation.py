@@ -5,7 +5,7 @@ import unittest
 from inksoul.config import InkSoulConfig
 from inksoul.errors import ConfigError
 from inksoul.generation import (CreationBrief, build_plan, generate, revise,
-                                revision_prompt, _clean_output)
+                                revision_prompt, _clean_output, _locate)
 from inksoul.llm import LLMClient
 from inksoul.reviewer import LiteraryIssue, ReviewReport
 
@@ -107,3 +107,50 @@ class TestRevise(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestLocate(unittest.TestCase):
+    """定位器：先定位、再改写——定位失败必须明确返回 None，不许瞎猜。"""
+
+    def test_exact_match(self):
+        self.assertEqual(_locate("他推开门。她关窗户。", "他推开门。"), (0, 5))
+
+    def test_fuzzy_match_ignores_punctuation(self):
+        span = _locate("他推开门 风灌进来。", "他推开门，风灌进来。")
+        self.assertIsNotNone(span)
+        self.assertEqual(span, (0, 9))
+
+    def test_unrelated_returns_none(self):
+        self.assertIsNone(_locate("她关上了窗户。", "他把窗户推开了"))
+
+    def test_too_short_returns_none(self):
+        self.assertIsNone(_locate("他说走吧。", "他说：「走吧」"))
+
+
+class TestReviseLocating(unittest.TestCase):
+    def review(self, text, severity=0.8):
+        issue = LiteraryIssue(kind="AI 味标记", clause_id="c1", text=text,
+                              severity=severity, suggestion="改结构")
+        return ReviewReport(issues=[issue], verdict="建议修订")
+
+    def test_revise_applies_when_punctuation_differs(self):
+        plan = build_plan(CreationBrief(theme="x"), InkSoulConfig())
+        text = "他把窗户推开了，外面的雨还没停下来。"
+        res = revise(text, self.review("他把窗户推开了,外面的雨还没停下来。"),
+                     fake_client("窗户被他推开，雨还在下。"), plan)
+        self.assertEqual(res.applied, 1)
+        self.assertEqual(res.text, "窗户被他推开，雨还在下。")
+
+    def test_note_when_nothing_blocking(self):
+        plan = build_plan(CreationBrief(theme="x"), InkSoulConfig())
+        res = revise("他推开门。", self.review("他推开门。", severity=0.3),
+                     fake_client("门被推开。"), plan)
+        self.assertEqual(res.applied, 0)
+        self.assertIn("无可修订项", res.notes[0])
+
+    def test_note_counts_locate_failures(self):
+        plan = build_plan(CreationBrief(theme="x"), InkSoulConfig())
+        res = revise("完全不同的句子。", self.review("他推开门，风灌进来。"),
+                     fake_client("x"), plan)
+        self.assertEqual(res.applied, 0)
+        self.assertIn("定位失败 1 处", res.notes[0])
+

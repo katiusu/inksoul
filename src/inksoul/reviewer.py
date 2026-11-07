@@ -37,6 +37,7 @@ KIND_ADJACENT = "相邻句式雷同"
 KIND_OPENING = "句首重复"
 KIND_DIALOGUE = "对话标签同质"
 KIND_EMOTION = "情绪直陈"
+KIND_MARKER = "AI 味标记"
 
 
 @dataclass
@@ -100,7 +101,7 @@ def _clause_texts(doc: Document) -> dict[str, tuple]:
 
 
 def review(doc: Document, *, fingerprint_report: fp.FingerprintReport | None = None,
-           diversity=None, style=None, narrative=None,
+           diversity=None, style=None, narrative=None, markers_report=None,
            engine: fp.FingerprintEngine | None = None) -> ReviewReport:
     """执行审查。所有可选报告缺省时按需自算（缺模块就跳过对应规则）。"""
     clauses_all = list(getattr(doc, "clauses", None) or [])
@@ -200,6 +201,52 @@ def review(doc: Document, *, fingerprint_report: fp.FingerprintReport | None = N
                 evidence={"cue": hit_cue, "emotion_word": hit_word,
                           "confidence": "低（词表启发式，未标定）"},
             ))
+
+    # 6) AI 味标记族：把密度放到人类网文分位数上看位置（不是 AI 概率）
+    try:
+        from . import markers as mk
+
+        mrep = markers_report if markers_report is not None else mk.analyze_markers(doc)
+        if mrep is not None and not getattr(mrep, "unavailable", False):
+            rows = mk.compare_to_baseline(mrep, mk.load_baseline())
+            # 回退 v0.4.3 的「按判定结果分派 severity」：40 对配对评测证明标记族密度对
+            # deepseek-chat 无区分度（AUC 0.29-0.52），按其 FAIL 族分配阻断分没有依据。
+            # 恢复 v0.4.2 口径：只看单族落在哪个分位区间。
+            for row in rows:
+                level = row.get("level", "ok")
+                if level == "ok":
+                    continue
+                kind_id = row["kind"]
+                samples, seen = [], set()
+                for hit in (getattr(mrep, "hits", None) or []):
+                    if hit.kind != kind_id or hit.clause_id in seen:
+                        continue
+                    seen.add(hit.clause_id)
+                    info = texts.get(hit.clause_id) if texts else None
+                    # 问题句必须是正文里真实存在的一句：reviser 靠它定位并替换
+                    quote = (info[0] if info else "") or hit.text
+                    if quote:
+                        samples.append((hit.clause_id, quote))
+                    if len(samples) >= 3:
+                        break
+                if not samples:
+                    samples = [("", "%s 密度 %.2f/千字超标" % (row["name"], row["value"]))]
+                for clause_ref, quote in samples:
+                    issues.append(LiteraryIssue(
+                        kind=KIND_MARKER, clause_id=clause_ref, text=quote,
+                        severity=0.6 if level == "very_high" else 0.35,
+                        suggestion=mk.SUGGESTIONS.get(kind_id, ""),
+                        evidence={"metric": "marker_per_1000", "value": row["value"],
+                                  "count": row.get("count"), "method": row.get("method"),
+                                  "p_ge": row.get("p_ge"),
+                                  "p50": row["p50"], "p90": row["p90"], "p99": row["p99"],
+                                  "ratio_p90": row["ratio_p90"], "level": level,
+                                  "baseline": "人类网文 542 块（3000 字/块，只算叙述句）"},
+                    ))
+            if rows and all(r.get("level") == "ok" for r in rows):
+                notes.append("AI 味标记族全部落在人类 p90 以内")
+    except Exception as exc:  # noqa: BLE001 - 规则失败不影响主审查
+        notes.append("AI 味标记检查跳过：%s: %s" % (type(exc).__name__, exc))
 
     if not getattr(report, "suspects", None):
         notes.append("该文本未产生机械复用候选（样本过短或确实没有重复）")

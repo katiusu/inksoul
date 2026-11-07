@@ -73,3 +73,29 @@ class TestReview(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+STIFF_TEXT = (
+    "他对这个问题进行了长时间的思考，并且对结果作出了判断。"
+    "通过对现场的调查，他发现了一个问题，并且对问题进行了一次处理。"
+    "经过对资料的整理，他对这部分内容进行了调整，也对结构作出了安排。"
+    "在这种情况之下，他不得不对计划进行修改，同时对细节进行了检查。"
+    "通过对现场的调查，他发现了一个问题，并且对问题进行了一次处理。"
+    "经过对资料的整理，他对这部分内容进行了调整，也对结构作出了安排。"
+)
+
+
+class TestMarkerIssueAnchor(unittest.TestCase):
+    """标记族问题句必须能定位到正文里的真实句子，否则修订器永远跳过。"""
+
+    def test_marker_issue_quotes_real_sentence(self):
+        from inksoul import markers as mk
+
+        doc = process(STIFF_TEXT * 6)  # 叙述要 >400 字才判定标记族
+        report = reviewer.review(doc, markers_report=mk.analyze_markers(doc))
+        marker_issues = [i for i in report.issues if i.kind == reviewer.KIND_MARKER]
+        self.assertTrue(marker_issues)
+        for issue in marker_issues:
+            self.assertIn(issue.text, STIFF_TEXT * 6)
+            self.assertNotEqual(issue.clause_id, "")
+            self.assertIn("method", issue.evidence)
+

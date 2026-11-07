@@ -155,6 +155,8 @@ GATE_COMMANDS: dict[str, str] = {
     "full": "/root/deslop/run_gates.sh {file}",
     "essay": "/root/deslop/postwrite.sh {file} --essay",
     "zhuque": "/root/deslop/postwrite.sh {file} --zhuque",
+    # 纯 Python 内置闸门：随包发布，不依赖宿主 /root/deslop
+    "markers": "__inksoul__:markers",
 }
 
 

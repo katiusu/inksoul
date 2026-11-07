@@ -74,6 +74,21 @@ def _fmt_report(rep) -> str:
             lines.append(f"  ×{s['freq']} 跨段{s['para_spread']} 间距变异{s['gap_cv']}  {s['signature']}")
             for ev in s["evidence"][:2]:
                 lines.append(f"      · {ev}")
+    try:
+        from . import style_pool as _sp
+        _pool = _sp.load_pool()
+        _vec = _sp.metrics_from_dict(d)
+        _dist = _sp.distance(_vec, _pool) if _pool else None
+    except Exception:
+        _dist = None
+    if _dist is not None:
+        lines.append("")
+        lines.append("== 人类池距离 ==")
+        _stats = ((_pool.get("genres") or {}).get("网文") or {}).get("distance") or {}
+        _range = "%s-%s" % (_stats.get("p10", "?"), _stats.get("p90", "?"))
+        lines.append(f"  到人类网文池中心 {_dist:.2f}（越低越像人；人类池 p10-p90 {_range}）")
+        for row in _sp.dim_report(_vec, _pool)[:3]:
+            lines.append(f"  {row['label']}: {row['value']}（池 {row['mean']}，z={row['z']:+.1f}）")
     div = d.get("diversity") or {}
     if not div.get("unavailable"):
         lines.append("")
@@ -276,12 +291,13 @@ def cmd_agent(args) -> int:
     for note in result.notes:
         print(note)
     print()
-    print("%-10s %6s %5s %5s %8s %8s %s" % ("阶段", "字数", "阻断", "问题", "MTLD", "MATTR", "闸门"))
+    print("%-10s %6s %5s %5s %8s %8s %6s %s" % ("阶段", "字数", "阻断", "问题", "MTLD", "MATTR", "池距", "闸门"))
     for rec in result.rounds:
         mtld = "%.1f" % rec.mtld if rec.mtld else "-"
         mattr = "%.3f" % rec.mattr if rec.mattr else "-"
-        print("%-10s %6d %5d %5d %8s %8s %s" % (rec.label, rec.chars, rec.blocking,
-                                                rec.issues, mtld, mattr, rec.gate_status))
+        dist = "%.2f" % rec.style_distance if rec.style_distance is not None else "-"
+        print("%-10s %6d %5d %5d %8s %8s %6s %s" % (rec.label, rec.chars, rec.blocking,
+                                                rec.issues, mtld, mattr, dist, rec.gate_status))
     print()
     print("停止原因：%s" % result.stop_reason)
     print("定稿取自：%s" % result.rounds[result.chosen].label)
@@ -484,15 +500,60 @@ def build_parser() -> argparse.ArgumentParser:
 
     gt = sub.add_parser("gate", help="对一篇现成稿子跑文风闸门（不生成）")
     gt.add_argument("target", help="稿子路径")
-    gt.add_argument("--preset", default="", choices=["", "deslop", "full", "essay", "zhuque", "off"],
-                    help="闸门预设：deslop（默认规范）/full（全部闸门）/essay（作文）/zhuque（朱雀）")
+    gt.add_argument("--preset", default="",
+                    choices=["", "deslop", "full", "essay", "zhuque", "markers", "off"],
+                    help="闸门预设：deslop/full/essay/zhuque（宿主脚本）、markers（内置纯 Python）")
     gt.add_argument("--cmd", dest="gate_cmd", default="", help="自定义命令（{file} 换成正文路径）")
     gt.add_argument("--timeout", type=float, default=0, help="超时秒数（默认 300）")
     gt.set_defaults(func=cmd_gate)
 
+    mk = sub.add_parser("markers", help="AI 味标记族密度（中文 Biber 清单）")
+    mk.add_argument("target", help="稿子路径")
+    mk.add_argument("--genre", default="网文", help="对比体裁（默认网文）")
+    mk.add_argument("--gate", action="store_true", help="按内置闸门出 VERDICT/RECEIPT")
+    mk.set_defaults(func=cmd_markers)
+
     d = sub.add_parser("doctor", help="环境自检")
     d.set_defaults(func=cmd_doctor)
     return p
+
+
+def cmd_markers(args) -> int:
+    """只看 AI 味标记族密度（中文 Biber 清单），--gate 出裁决。"""
+    from .markers import (KINDS, KIND_NAMES, analyze_markers, compare_to_baseline,
+                          gate_text, load_baseline)
+    from .text_processor import process
+
+    path = Path(args.target).expanduser()
+    if not path.is_file():
+        print("错误：找不到文件 %s" % path, file=sys.stderr)
+        return 2
+    text = path.read_text(encoding="utf-8")
+    if getattr(args, "gate", False):
+        passed, lines = gate_text(text, genre=args.genre, filename=path.name)
+        print(chr(10).join(lines))
+        return 0 if passed else 1
+    doc = process(text)
+    rep = analyze_markers(doc)
+    print("%s｜字数 %d｜叙述 %d｜对话 %d"
+          % (path.name, rep.chars, rep.narrative_chars, rep.dialogue_chars))
+    try:
+        rows = compare_to_baseline(rep, load_baseline(), args.genre)
+    except (OSError, ValueError):
+        rows = []
+    if not rows:
+        for kind in KINDS:
+            print("  %-10s %6.2f/千字" % (KIND_NAMES[kind], rep.per_1000.get(kind, 0.0)))
+        return 0
+    for r in rows:
+        flag = {"ok": " .  ", "high": "HIGH", "very_high": "VHIGH"}[r["level"]]
+        print("[%s] %-14s %6.2f/千字（人类 p50 %.2f / p90 %.2f / p99 %.2f）"
+              % (flag, r["name"], r["value"], r["p50"], r["p90"], r["p99"]))
+    bad = [r for r in rows if r["level"] != "ok"]
+    print("超出人类 p90 的族：%d／%d" % (len(bad), len(rows)))
+    for n in rep.notes or []:
+        print("note: " + n)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

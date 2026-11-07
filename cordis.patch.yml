@@ -1,6 +1,11 @@
-# dsh-inksoul bundle 层：登记插件本体 + 默认配置。
+# dsh-inksoul bundle 层：登记插件本体 + 写作预设（底座 = flash-lean-ptc-v3）。
 #
-# 工具注册发生在插件 apply() 里（ctx.inject(['tools'])），本文件只负责把插件挂进宿主组合。
+# 预设思路（与 presets/flash-lean-ptc-v3.patch.yml 对齐）：
+# - 效率层照抄 lean-ptc-v3：1M 窗口取 0.25 压缩阈值、保留 20000 近期 token、工具结果 8192 截断；
+# - subagent 可续聊（backgroundMode: continuable），ralph / workflow / codex / claude-code 关闭；
+# - PTC 表现层 mode=ptc（模型可用 run_code 调工具）；
+# - 写作层：inksoul 五工具在前，persona 后缀换成「中文写作 + 机械指标 + 闸门 PASS 才交付」。
+
 - insert:
     - id: inksoul
       name: 'dsh-inksoul'
@@ -17,9 +22,9 @@
       name: '@deepseek-ai/dsh-agent-preset'
       config:
         id: inksoul
-        name: InkSoul 写作
-        description: 中文写作与去 AI 味：诊断、同质度、闸门、生成闭环
-        order: 50
+        name: InkSoul 写作（Flash 精简 PTC v3）
+        description: 中文写作与去 AI 味 · 底座 flash-lean-ptc-v3（1M 窗口 0.25 压缩阈值 / 可续聊 subagent / PTC 表现层）：五工具诊断、标记族闸门、生成闭环
+        order: 27
         plugins:
           - id: inksoul
             name: 'dsh-inksoul'
@@ -33,6 +38,31 @@
             name: '@deepseek-ai/dsh-persona'
             config:
               prefix: You are a coding agent powered by the {{model}} model.
+              suffix: |-
+                中文写作工作区规则（覆盖工具默认措辞；与效率规则冲突时，以「不牺牲正确性」为前提）。
+
+                BUDGET FIRST
+                1. 轮数预算而不是步数预算：目标 ≤20 轮；超过 3 倍预算（约 60 轮）就停下来重新规划，别重复同一个循环。
+                2. 先探测再设计：一次简短思考 + 一条廉价命令探事实，胜过把设计全部展开。
+                3. 输入型任务先产出满足硬约束的最小可交付物，再在预算内细化。
+                4. 交付前做一次合并验收（所有硬约束一次过完），通过就交付，不再追加随机/压测轮；没验的要说明。
+                5. 看文件用 read/glob/grep，不用 shell 翻文件；命令自己的输出可以 head 截断。
+                6. 长输出重定向到文件或 | head -40，不整段回贴。
+                7. 同一逻辑步里 3 个以上独立调用合成一个 run_code 程序；只差一步时才单独调用。
+                8. 只读新内容；派生结论用 grep/脚本从文件重建，不重复读进上下文。笔记 ≤60 行。
+                9. 先建骨架再 edit 扩展；两次 shell 补丁失败就换编辑工具。
+                10. 回复使用用户语言；不把密钥、令牌、私密原文写进会话，按路径引用。
+
+                写作与判定
+                11. 判断「像不像 AI」先跑 inksoul_markers / inksoul_analyze：只给密度与人类网文分位数位置，不输出 AI 概率，不把单一指标当判决。
+                12. 定稿闸门：正文落盘后必须跑 inksoul_gate（preset=markers 为纯 Python 内置闸门；宿主有 /root/deslop 时才用 deslop/full）。只有 VERDICT: PASS 才算完成，回复里原样带出 RECEIPT 行。
+                13. 闸门 FAIL 就按命中条目改写再重跑，不许留到下一轮；闸门未 PASS 的稿子不当定稿交付。
+                14. 需要出正文且要跑完整闭环时用 inksoul_agent（分钟级）；只想看指标或跑闸门时用更便宜的工具。
+                15. 文风细则以 skill prose-deai 为准（浓稠长句、逗号密度、句末换词、模具配额；亲密场景另加载 references/intimacy.md）。
+                16. 表述边界：骨架相似度高只说「骨架复用明显」，不说抄袭；偏离基线只说「偏离该基线分布」，不推「非人类」；存疑处标「需人工判断」。
+                17. 人类风格目标是硬约束：写正文时按【文体规划】里的「人类写法目标」（长句占比/连接词密度/对白占比/信息密度/骨架复用率，取自两本人类网文 240 段 900 字的 p10-p90）调，不靠堆形容词造「人味」。
+                18. 禁止整齐配方：连续三段同构排比、被动框架（「被…所…」「得到了…」）、评价性收束（「这一刻，他明白了…」「他知道，从此…」）都不要写；细节要带具体物件与触感，不要抽象概括。
+                19. 出正文后跑 inksoul_analyze：池距 distance 大于 1.30（人类 p90）就是偏 AI 面，按 dim_report 里 |z| 最大的两维改写，再看距离是否下降；只有距离下降才算改对。
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -53,8 +83,6 @@
               sampleOverCapGlobResults: false
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
-          - id: tool-schedule
-            name: '@deepseek-ai/dsh-tool-schedule'
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill
@@ -73,7 +101,7 @@
                 name: '@deepseek-ai/dsh-plan-mode'
                 config:
                   section: |
-                    You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+                    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
                     Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
 
@@ -93,6 +121,13 @@
             config:
               - id: compaction-basic
                 name: '@deepseek-ai/dsh-compaction-basic'
+                # FLASH TUNING：该路由声明 1,000,000 窗口，默认 0.8 要到 800k 才压缩；
+                # 长写作会话实测大量步数停在 300k 以上，故取 0.25 阈值 / 保留 20000 近期 token。
+                config:
+                  thresholdRatio: 0.25
+                  retainTokens: 20000
+                  compactionRetries: 1
+                  auto: true
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
               - id: tool-result-pruner
@@ -117,17 +152,27 @@
                   provider: spawn
                   toolName: subagent
                   modelSelectionSettings: true
+                  backgroundMode: continuable
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: fork
                   toolName: subagent_fork
+                  backgroundMode: continuable
               - id: workflow-ptc
                 name: '@deepseek-ai/dsh-workflow-ptc'
+                disabled: true
                 config:
                   provider: spawn
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
+                disabled: true
+              - id: tool-ralph
+                name: '@deepseek-ai/dsh-tool-ralph'
+                disabled: true
+                config:
+                  subagentProvider: spawn
+                  maxRounds: 64
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo
@@ -139,6 +184,10 @@
             config:
               fetch: true
               searchTimeoutMs: 60000
+          - id: tool-presentation
+            name: '@deepseek-ai/dsh-agent-tool-presentation'
+            config:
+              mode: ptc
           - id: present
             name: '@deepseek-ai/dsh-tool-present'
           - id: tool-plugin-manager

@@ -1,6 +1,6 @@
 {
   "name": "dsh-inksoul",
-  "version": "0.3.0",
+  "version": "0.5.1",
   "description": "InkSoul —— 给 AI Agent 的中文写作插件：句法骨架诊断、同质对比、文风闸门与生成闭环",
   "type": "module",
   "main": "lib/index.js",

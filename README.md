@@ -27,7 +27,8 @@ dsh plugin --profile web add /path/to/repo    # 从本地目录装
 | --- | --- | --- |
 | `inksoul_analyze` | 想量化一篇中文文本的句法骨架、句长分布、与体裁基线的距离 | 秒级 |
 | `inksoul_corpus` | 一批稿子之间两两骨架相似度——判断是不是同一副骨架反复复用 | 秒级 |
-| `inksoul_gate` | 对定稿跑文风闸门（去 AI 味精查），拿回逐条命中项 | 30–90 秒 |
+| `inksoul_markers` | AI 味标记族密度（中文 Biber 清单：名词化/定语链/并列/被动/连接词/抽象/比喻/四字格），对照人类网文 p50/p90/p99 | 秒级 |
+| `inksoul_gate` | 对定稿跑文风闸门（去 AI 味精查），拿回逐条命中项；`preset=markers` 是随包内置的纯 Python 闸门 | 1–90 秒 |
 | `inksoul_agent` | 要真的写出正文：规划→多候选→复核→修订→闸门，闭环 | 分钟级 |
 | `inksoul_doctor` | 环境自检；任何报错先跑它 | 1 秒 |
 

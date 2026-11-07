@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import time
 import re
 import shlex
 import subprocess
@@ -34,6 +35,8 @@ GATE_PLACEHOLDER = "{file}"
 GATE_TIMEOUT = 300.0
 #: 默认改进轮数（超过 3 轮基本是在拧指标而不是在改文）
 DEFAULT_ROUNDS = 3
+#: 修订阶段的总时间预算（秒）：多轮收敛不能无限烧模型
+REVISION_BUDGET_SEC = 240.0
 STATUS_SKIPPED = "skipped"
 STATUS_PASS = "pass"
 STATUS_FAIL = "fail"
@@ -65,6 +68,33 @@ class GateResult:
         return asdict(self)
 
 
+def _run_builtin_gate(name: str, path: Path) -> GateResult:
+    """跑插件自带闸门（markers）：纯 Python，不调外部脚本。"""
+    if name != "markers":
+        return GateResult(status=STATUS_ERROR, rc=-2, output="未知的内置闸门：" + name)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return GateResult(status=STATUS_ERROR, rc=-1, output="读不到文件：" + str(exc))
+    try:
+        from .markers import gate_text
+
+        passed, lines = gate_text(text, filename=path.name)
+    except Exception as exc:  # noqa: BLE001 - 闸门内部错误按失败报
+        return GateResult(status=STATUS_ERROR, rc=-1,
+                          output="内置闸门出错：%s: %s" % (type(exc).__name__, exc))
+    body = chr(10).join(lines)
+    verdict = next((ln.split("（", 1)[0].strip() for ln in lines
+                    if ln.startswith("VERDICT:")),
+                   "VERDICT: " + ("PASS" if passed else "FAIL"))
+    told_fail = verdict.endswith("FAIL")
+    receipt = next((ln for ln in lines if ln.startswith("RECEIPT")), "")
+    findings = [ln.strip() for ln in lines if "VHIGH" in ln or "HIGH" in ln]
+    return GateResult(status=STATUS_FAIL if told_fail else STATUS_PASS,
+                      rc=1 if told_fail else 0, verdict=verdict, receipt=receipt,
+                      output=body[-4000:], findings=findings[:20])
+
+
 def run_gate(cmd: str, path: Path, *, timeout: float = GATE_TIMEOUT,
              runner=None) -> GateResult:
     """执行外部门禁命令，解析 VERDICT 与 RECEIPT 行。
@@ -73,6 +103,8 @@ def run_gate(cmd: str, path: Path, *, timeout: float = GATE_TIMEOUT,
     """
     if not cmd:
         return GateResult()
+    if cmd.strip().startswith("__inksoul__:"):
+        return _run_builtin_gate(cmd.strip().split(":", 1)[1], path)
     if GATE_PLACEHOLDER in cmd:
         line = cmd.replace(GATE_PLACEHOLDER, shlex.quote(str(path)))
     else:
@@ -131,14 +163,16 @@ class RoundRecord:
     gate_status: str = STATUS_SKIPPED
     applied: int = 0
     note: str = ""
+    style_distance: float | None = None
 
     @property
     def blocked(self) -> bool:
         return self.gate_status in (STATUS_FAIL, STATUS_ERROR)
 
     def rank(self) -> tuple:
-        """越小越好：先看闸门，再看阻断级问题，最后看问题总数。"""
-        return (1 if self.blocked else 0, self.blocking, self.issues)
+        """越小越好：闸门 → 阻断级问题 → 问题总数 → 到人类池的距离。"""
+        dist = round(self.style_distance, 1) if self.style_distance is not None else 9.9
+        return (1 if self.blocked else 0, self.blocking, self.issues, dist)
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -242,12 +276,22 @@ class WritingAgent:
         blocking = len(review.blocking) if hasattr(review, "blocking") else 0
         issues = len(getattr(review, "issues", []) or [])
         lex = getattr(report.diversity, "lexical", None) or {}
+        style_dist = None
+        try:
+            from . import style_pool as _sp
+            _pool = _sp.load_pool()
+            if _pool:
+                style_dist = _sp.distance(_sp.metrics_from_dict(report.as_dict()), _pool)
+        except Exception:
+            style_dist = None
         gate = GateResult()
         if self.gate_cmd and with_gate:
             gate = self._gate_text(text)
+        if gate.status == STATUS_PASS and blocking:
+            note = (note + "；" if note else "") + "闸门 PASS 仅覆盖标记族，另有 %d 条阻断" % blocking
         rec = RoundRecord(label=label, round=rnd, chars=len(text), blocking=blocking,
                           issues=issues, mtld=lex.get("mtld"), mattr=lex.get("mattr"),
-                          gate_status=gate.status, applied=applied, note=note)
+                          gate_status=gate.status, applied=applied, note=note, style_distance=style_dist)
         return rec, report, gate
 
     def _gate_text(self, text: str) -> GateResult:
@@ -347,46 +391,96 @@ class WritingAgent:
             rec, rep, gate = self._grade(draft.text, label="候选#%d" % i,
                                          with_gate=not self.gate_final_only)
             pool.append((rec, draft.text, rep, gate))
-            if n > 1 and rec.rank() == (0, 0, 0):
+            if n > 1 and rec.rank()[:3] == (0, 0, 0):
                 break  # 第一个全干净的候选就不再花 token
         best_rec, best_text, best_report, best_gate = min(pool, key=lambda p: p[0].rank())
         history: list[RoundRecord] = [r for r, _, _, _ in pool]
 
-        # 2) 复核 → 改进 → 回滚
+        # 2) 复核 → 改进 → 回滚（多轮收敛：直到闸门 PASS / 无问题 / 预算或轮数用完）
         stop = "达到轮次上限（%d）" % limit
+        started = time.monotonic()
+        stall = 0
+        # 内置闸门是纯 Python，便宜，可以每轮都跑；外部闸门 40s 级，仍留到定稿
+        cheap_gate = self.gate_cmd.strip().startswith("__inksoul__:")
         for rnd in range(1, limit + 1):
-            if best_rec.rank() == (0, 0, 0):
+            passed = (best_gate.status.upper() == STATUS_PASS.upper()
+                      and not best_report.review.issues)
+            if passed:
+                stop = "复核通过：无问题且闸门 PASS"
+                break
+            if not best_report.review.issues and not best_gate.blocked:
                 stop = "复核通过：无阻断级问题"
                 break
+            if REVISION_BUDGET_SEC - (time.monotonic() - started) <= 0:
+                stop = "修订预算用完（%.0fs）" % REVISION_BUDGET_SEC
+                break
+            blocking = [i for i in best_report.review.issues if i.severity >= 0.6]
             if best_gate.blocked and best_gate.findings:
                 rev = restyle(best_text, best_gate.findings, self.client, plan,
                               cfg=self.config, extra_system=story_review)
-            else:
+            elif blocking:
                 rev = revise(best_text, best_report.review, self.client, plan,
-                             cfg=self.config, max_rounds=1, extra_system=story_review)
+                             cfg=self.config, max_rounds=1, extra_system=story_review,
+                             min_severity=0.6, max_items=8)
+            elif any(i.text for i in best_report.review.issues):
+                # 只剩低严重度问题（0.3~0.6）：也走逐句替换——比整篇重写便宜且能定位
+                rev = revise(best_text, best_report.review, self.client, plan,
+                             cfg=self.config, max_rounds=1, extra_system=story_review,
+                             min_severity=0.3, max_items=8)
+            else:
+                findings = ["%s：%s" % (i.kind, i.suggestion)
+                            for i in best_report.review.issues[:6] if i.suggestion]
+                if not findings:
+                    stop = "复核通过：无阻断级问题"
+                    break
+                rev = restyle(best_text, findings, self.client, plan,
+                              cfg=self.config, extra_system=story_review)
             if not rev.applied:
-                stop = "无可用修订（问题句无法定位或模型未给出可替换的改写）"
+                note = rev.notes[0] if rev.notes else "无改写产出"
+                stop = ("有 %d 条阻断级问题但修订未落地（%s）" % (len(blocking), note)
+                        if blocking else "无阻断级问题，风格重写未产出改动")
                 break
             rec, rep, gate = self._grade(rev.text, label="修订#%d" % rnd, rnd=rnd,
                                          applied=rev.applied,
                                          note=(rev.notes[0] if rev.notes else ""),
-                                         with_gate=not self.gate_final_only)
+                                         with_gate=not self.gate_final_only or cheap_gate)
             history.append(rec)
             if rec.rank() < best_rec.rank():
                 best_rec, best_text, best_report, best_gate = rec, rev.text, rep, gate
+                stall = 0
+                if (gate.status.upper() == STATUS_PASS.upper()
+                        and not rep.review.issues):
+                    stop = "修订 %d 轮后闸门 PASS" % rnd
+                    break
             else:
-                stop = "修订未改善，已回滚到问题最少的那一版"
-                break
+                stall += 1
+                if stall >= 2:
+                    stop = "连续 %d 轮无改善，已回滚到问题最少的那一版" % stall
+                    break
 
         # 3) 定稿后过闸门：只在最终稿上跑（1 次，未过再补 1 次）
         gate_passes = 0
+        source_label = best_rec.label
         if self.gate_cmd and self.gate_final_only:
             best_text, best_gate, gate_passes = self._finalize_gate(
                 best_text, plan, story_review)
-            best_rec.gate_status = best_gate.status
+            # 定稿可能被闸门后置重写改过，重跑一次分析，让报告里的数字对应最终正文
+            rec2, rep2, _unused = self._grade(best_text, label="定稿",
+                                              rnd=best_rec.round, with_gate=False)
+            rec2.gate_status = best_gate.status
+            rec2.note = "定稿后重跑分析（%d 次闸门）" % gate_passes
+            try:
+                history[history.index(best_rec)] = rec2  # 原地替换，保持轨迹条数与选中下标不变
+            except ValueError:
+                history.append(rec2)
+            best_rec, best_report = rec2, rep2
+            if not best_gate.blocked and not rep2.review.blocking:
+                stop = "定稿过闸门 PASS（%d 次）" % gate_passes
+            elif best_gate.blocked:
+                stop = "定稿仍未过闸门：%s" % (best_gate.verdict or best_gate.status)
 
-        notes = ["候选 %d 个，选中「%s」" % (len(pool), best_rec.label),
-                 "轨迹 %d 条，定稿 rank=%s（闸门,阻断,问题数）" % (len(history), best_rec.rank())]
+        notes = ["候选 %d 个，选中「%s」" % (len(pool), source_label),
+                 "轨迹 %d 条，定稿 rank=%s（闸门,阻断,问题数,池距）" % (len(history), best_rec.rank())]
         notes.extend(pack.notes)
         if from_path:
             notes.append("已按 --from 续写模式生成（前文尾部 3000 字进提示）")

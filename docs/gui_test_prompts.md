@@ -85,3 +85,9 @@ inksoul_corpus 报了两篇相似度 0.93。你能不能说这两篇是抄袭？
 - 只有一对样本时 `最不像` 与 `最像` 重复打印 → `src/inksoul/cli.py:167` 改为按 (a, b, similarity) 去重。
 
 另一个已知交互特性（不是 bug）：`inksoul_corpus` 的相对路径按**引擎进程 cwd**解析，不是会话 cwd，所以 `dir: "examples"` 会报 `[INKSOUL_ERROR] 路径不存在：examples`——传绝对路径。
+
+## markers（v0.4.0）
+
+- 提示：`用 inksoul_markers 看一下 样例.txt，再跑 preset=markers 的闸门`
+- 期望：八族密度 + 人类 p50/p90/p99；闸门输出 `VERDICT:` 与 `RECEIPT:` 两行；FAIL 时给「按命中改」的方向。
+- 反例：要求「AI 概率」时，工具应拒绝给概率，只给分布位置。

@@ -42,6 +42,8 @@ class AnalysisReport:
     style: Any = None
     narrative: Any = None
     dependency: Any = None
+    markers: Any = None
+    style_pool: Any = None
     review: Any = None
     coverage: dict | None = None
 
@@ -53,6 +55,8 @@ class AnalysisReport:
             "style": self.style.as_dict() if hasattr(self.style, "as_dict") else self.style,
             "narrative": self.narrative.as_dict() if hasattr(self.narrative, "as_dict") else self.narrative,
             "dependency": self.dependency.as_dict() if hasattr(self.dependency, "as_dict") else self.dependency,
+            "markers": self.markers.as_dict() if hasattr(self.markers, "as_dict") else self.markers,
+            "style_pool": self.style_pool,
             "review": self.review.as_dict() if hasattr(self.review, "as_dict") else self.review,
         }
         if self.coverage is not None:
@@ -102,17 +106,37 @@ class Analyzer:
         style = self._load("style", "analyze_style", doc)
         narrative = self._load("narrative", "analyze_narrative", doc)
         dependency = self._load("dependency", "analyze_dependency", doc)
+        # 中文 Biber 标记族（AI 味的面相指标）：缺失不影响其他报告
+        try:
+            markers = self._load("markers", "analyze_markers", doc)
+        except Exception as exc:  # noqa: BLE001 - 降级不崩溃
+            markers = _Placeholder("markers", "%s: %s" % (type(exc).__name__, exc))
         review = None
         if with_review:
             try:
                 from .reviewer import review as do_review
 
                 review = do_review(doc, fingerprint_report=fpr, diversity=diversity,
-                                   style=style, narrative=narrative)
+                                   style=style, narrative=narrative, markers_report=markers)
             except InkSoulError as exc:
                 review = _Placeholder("reviewer", str(exc))
             except Exception as exc:  # noqa: BLE001 - 降级不崩溃
                 review = _Placeholder("reviewer", f"{type(exc).__name__}: {exc}")
+        # 人类池距离：相对量，越低越像该体裁的人类写法（池缺失则跳过）
+        style_pool_report = None
+        try:
+            from . import style_pool as _sp
+            _pool = _sp.load_pool()
+            if _pool:
+                _data = {"style": style.as_dict() if hasattr(style, "as_dict") else (style or {}),
+                         "narrative": narrative.as_dict() if hasattr(narrative, "as_dict") else (narrative or {}),
+                         "fingerprint": fpr.as_dict()}
+                _vec = _sp.metrics_from_dict(_data)
+                _d = _sp.distance(_vec, _pool)
+                if _d is not None:
+                    style_pool_report = {"distance": _d, "dims": _sp.dim_report(_vec, _pool)}
+        except Exception:
+            style_pool_report = None
         coverage = baseline.coverage(doc) if baseline is not None else None
         meta = {
             "backend": getattr(self.backend, "name", "unknown"),
@@ -126,7 +150,8 @@ class Analyzer:
         }
         return AnalysisReport(
             text=text, meta=meta, fingerprint=fpr, diversity=diversity,
-            style=style, narrative=narrative, dependency=dependency, review=review, coverage=coverage,
+            style=style, narrative=narrative, dependency=dependency, markers=markers,
+            review=review, coverage=coverage, style_pool=style_pool_report,
         )
 
     def analyze_file(self, path: str | Path, **kw) -> AnalysisReport:

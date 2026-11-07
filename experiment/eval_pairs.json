@@ -1,0 +1,56 @@
+{
+ "pairs": [
+  40,
+  40
+ ],
+ "per_kind": {
+  "NOM": {
+   "human_mean": 0.2,
+   "ai_mean": 0.04,
+   "auc": 0.45
+  },
+  "ATTR": {
+   "human_mean": 1.07,
+   "ai_mean": 0.26,
+   "auc": 0.328
+  },
+  "PARALLEL": {
+   "human_mean": 0.08,
+   "ai_mean": 0.1,
+   "auc": 0.524
+  },
+  "PASSIVE": {
+   "human_mean": 1.72,
+   "ai_mean": 1.5,
+   "auc": 0.496
+  },
+  "CONNECTIVE": {
+   "human_mean": 0.39,
+   "ai_mean": 0.04,
+   "auc": 0.412
+  },
+  "ABSTRACT": {
+   "human_mean": 0.33,
+   "ai_mean": 0.23,
+   "auc": 0.498
+  },
+  "SIMILE": {
+   "human_mean": 0.12,
+   "ai_mean": 0.0,
+   "auc": 0.463
+  },
+  "IDIOM": {
+   "human_mean": 3.39,
+   "ai_mean": 2.06,
+   "auc": 0.294
+  }
+ },
+ "gate_human": {
+  "PASS": 40
+ },
+ "gate_ai": {
+  "PASS": 37,
+  "SKIP（叙述": 3
+ },
+ "secs": 531.8
+}

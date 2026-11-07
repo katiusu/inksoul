@@ -1,6 +1,7 @@
 """命令行测试：入口、退出码、中文错误提示。"""
 import contextlib
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -52,7 +53,19 @@ class TestCLI(unittest.TestCase):
         self.assertIn("小说", out)
 
     def test_generate_without_key(self):
-        code, _out, err = run(["generate", "雨夜重逢", "--target-chars", "100"])
+        # 隔离本机 ~/.dsh/inksoul/config.json：没有 key 的行为要能单独验证
+        with tempfile.TemporaryDirectory() as d:
+            old_home = os.environ.get("INKSOUL_HOME")
+            old_key = os.environ.pop("INKSOUL_API_KEY", None)
+            os.environ["INKSOUL_HOME"] = d
+            try:
+                code, _out, err = run(["generate", "雨夜重逢", "--target-chars", "100"])
+            finally:
+                for k, v in (("INKSOUL_HOME", old_home), ("INKSOUL_API_KEY", old_key)):
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
         self.assertNotEqual(code, 0)
         self.assertTrue("api_key" in err or "API" in err)
 

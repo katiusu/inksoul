@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from dataclasses import asdict, dataclass, field
@@ -73,6 +74,31 @@ class CreationBrief:
         return "\n".join(parts)
 
 
+def _human_target_lines():
+    """人类池分位区间，作为写正文时的显式风格目标（池缺失则空）。"""
+    try:
+        from .style_pool import load_pool
+
+        pool = load_pool()
+        stats = (pool or {}).get("genres", {}).get("网文") or {}
+        stats = stats.get("dims") or stats
+        rows = [
+            ("长句占比", "long_sentence_share", "%.2f"),
+            ("连接词/千字", "conj_per_kchar", "%.1f"),
+            ("对白占比", "dialogue_ratio", "%.2f"),
+            ("信息密度", "information_density_mean", "%.2f"),
+            ("骨架复用率", "reuse_rate", "%.2f"),
+        ]
+        out = []
+        for label, key, fmt in rows:
+            st = stats.get(key) or {}
+            if "p10" in st and "p90" in st:
+                out.append("%s %s–%s" % (label, fmt % st["p10"], fmt % st["p90"]))
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
 @dataclass
 class StylePlan:
     """文体规划：带进生成与修订的策略。"""
@@ -99,6 +125,10 @@ class StylePlan:
             lines.append("- 句式策略：" + "；".join(self.sentence_policy))
         if self.forbidden:
             lines.append("- 避免：" + "；".join(self.forbidden))
+        targets = _human_target_lines()
+        if targets:
+            lines.append("- 人类写法目标（人类网文池 p10–p90）：" + "；".join(targets))
+            lines.append("- 以上是统计目标：靠叙事推进与细节控制达成，不要机械凑数，也不要写成指标清单")
         return "\n".join(lines)
 
     def as_dict(self) -> dict:
@@ -232,11 +262,143 @@ def revision_prompt(issue_texts: list[str], window: dict, plan: StylePlan) -> st
     )
 
 
+def _locate(text: str, needle: str, *, min_ratio: float = 0.6) -> tuple[int, int] | None:
+    """在正文里定位一条问题句：返回 (start, end)，失败返回 None。
+
+    审查阶段的小句可能被规范化过（引号/空白/省略号），精确 find 会失配。
+    先做精确匹配，再把两侧都压成「只留字母数字汉字」的串做 difflib 对齐，
+    用索引映射回原文，保证替换范围覆盖整条问题句而不是残片。
+    """
+    if not needle:
+        return None
+    idx = text.find(needle)
+    if idx >= 0:
+        return idx, idx + len(needle)
+    norm_n, core = [], "".join(c for c in needle if c.isalnum())
+    if len(core) < 6:
+        return None
+    norm_t, pos = [], []
+    for i, ch in enumerate(text):
+        if ch.isalnum():
+            norm_t.append(ch)
+            pos.append(i)
+    if not norm_t:
+        return None
+    matcher = difflib.SequenceMatcher(None, "".join(norm_t), core, autojunk=False)
+    block = matcher.find_longest_match(0, len(norm_t), 0, len(core))
+    if block.size >= max(6, int(len(core) * min_ratio)):
+        return pos[block.a], pos[block.a + block.size - 1] + 1
+    return None
+
+
+_SENT_SPLIT = re.compile(r"[。！？\n]+")
+
+
+def _tag_total(text: str) -> int:
+    """窗口内标记总数（轻量），用于改写前后对比。"""
+    from .markers import total_tags
+    return total_tags(text)
+
+
+def _sentence_cv(text: str) -> float | None:
+    lens = [len(s.strip()) for s in _SENT_SPLIT.split(text) if len(s.strip()) >= 2]
+    if len(lens) < 5:
+        return None
+    mean = sum(lens) / len(lens)
+    if mean <= 0:
+        return None
+    var = sum((x - mean) ** 2 for x in lens) / len(lens)
+    return (var ** 0.5) / mean
+
+
+def _char_ngram_cosine(a: str, b: str, n: int = 3) -> float:
+    from collections import Counter
+    ca = Counter(a[i:i + n] for i in range(max(0, len(a) - n + 1)))
+    cb = Counter(b[i:i + n] for i in range(max(0, len(b) - n + 1)))
+    if not ca or not cb:
+        return 0.0
+    inter = sum((ca & cb).values())
+    return inter / ((sum(ca.values()) ** 0.5) * (sum(cb.values()) ** 0.5))
+
+
+def _mtld_of(text: str) -> float | None:
+    try:
+        from .lexical import mtld
+        from .text_processor import process
+        words = [w for w in process(text).words if w]
+        return mtld(words) if len(words) >= 50 else None
+    except Exception:
+        return None
+
+
+def _style_distance(text: str):
+    """到人类池的距离（越低越像人）；池/依赖缺失时 None。"""
+    try:
+        from .style_pool import distance_of_text, load_pool
+
+        return distance_of_text(text, load_pool())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fidelity_checks(text: str, out: str) -> dict:
+    """restyle 保真检查：长度 + 语义（3-gram 余弦）+ 方差（句长 CV / MTLD）。
+
+    依据 Sourati 等 2026：AI 润色把文本方差压低 21–50%，而语义余弦仍有 87% 样本 >0.95。
+    所以「像不像原文」不够，必须同时看「散度有没有被抹平」。
+    """
+    n = len(text)
+    ratio = len(out) / max(1, n)
+    sim = _char_ngram_cosine(text, out)
+    cv_a, cv_b = _sentence_cv(text), _sentence_cv(out)
+    mt_a, mt_b = _mtld_of(text), _mtld_of(out)
+    v: list[str] = []
+    if n >= 500 and not (0.85 <= ratio <= 1.15):
+        v.append("字数 %.0f%%（要求 85–115%%）" % (100 * ratio))
+    if n >= 500 and sim < 0.50:
+        v.append("3-gram 余弦 %.2f（< 0.50，可能抽掉内容）" % sim)
+    # 只拦「下降」：Sourati 说的失败模式是散度被抹平，不是被放开
+    if cv_a and cv_b and (cv_a - cv_b) / cv_a > 0.15:
+        v.append("句长 CV %.2f→%.2f（下降 >15%%，散度被抹平）" % (cv_a, cv_b))
+    if mt_a and mt_b and (mt_a - mt_b) / mt_a > 0.15:
+        v.append("MTLD %.0f→%.0f（下降 >15%%，词汇多样性被压平）" % (mt_a, mt_b))
+    return {"ratio": ratio, "sim": sim, "cv": (cv_a, cv_b),
+            "mtld": (mt_a, mt_b), "violations": v}
+
+
+def _retry_sentence(client: LLMClient, issue, window: dict, plan: StylePlan,
+                    extra_system: str, original: str) -> str:
+    """一次重采样：明确要求避开刚被拦下的结构。"""
+    try:
+        resp = client.chat(
+            [{"role": "system", "content": _system(SYSTEM_PROMPT, extra_system)},
+             {"role": "user", "content": revision_prompt(
+                 [f"{issue.kind}：{issue.suggestion}",
+                  "不要用被动句、名词化框架或四字格堆叠"],
+                 window, plan)}],
+            temperature=0.8, max_tokens=400)
+    except InkSoulError:
+        return ""
+    out = _clean_output(resp.text).split("\n")[0].strip()
+    if not out or out == original:
+        return ""
+    if len(out) > len(original) * 3 + 40:
+        return ""
+    return out
+
+
 def revise(text: str, review_report: ReviewReport, client: LLMClient | None,
            plan: StylePlan, *, cfg: InkSoulConfig | None = None,
            max_rounds: int | None = None, offline: bool = False,
-           extra_system: str = "") -> RevisionResult:
-    """按审查问题做局部修订：逐条替换，替换后不重新分析（由调用方再跑一次 analyze 复核）。"""
+           extra_system: str = "", min_severity: float = 0.6,
+           max_items: int = 8, recheck: bool = True,
+           style_guard: bool = True) -> RevisionResult:
+    """按审查问题做局部修订：逐条替换，替换后做**局部复检**（D1）。
+
+    复检口径：同一 ±200 字窗口里，新句不能把标记堆得比原来更高；
+    一次重采样仍不改善就放弃这句——不用新问题换旧问题。
+    style_guard：额外要求该窗口到人类池的距离不上升（容忍 +0.05）。
+    """
     if offline or client is None or not client.available:
         return RevisionResult(text=text, rounds=0, applied=0,
                               skipped=len(review_report.issues),
@@ -244,18 +406,21 @@ def revise(text: str, review_report: ReviewReport, client: LLMClient | None,
     gen = cfg.generation if cfg else GenerationConfig()
     rounds_limit = gen.max_revision_rounds if max_rounds is None else max_rounds
     result = text
-    applied = skipped = 0
+    applied = skipped = missed = rejected = 0
     rounds = 0
     for _round in range(max(0, rounds_limit)):
-        targets = [i for i in review_report.issues if i.severity >= 0.6 and i.text]
+        targets = [i for i in review_report.issues
+                   if i.severity >= min_severity and i.text]
         if not targets:
             break
         changed = False
-        for issue in targets[:8]:
-            idx = result.find(issue.text)
-            if idx < 0:
+        for issue in targets[:max_items]:
+            span = _locate(result, issue.text)
+            if span is None:
+                missed += 1
                 skipped += 1
                 continue
+            start, end = span
             window = _window(result, issue.text)
             try:
                 resp = client.chat(
@@ -267,19 +432,60 @@ def revise(text: str, review_report: ReviewReport, client: LLMClient | None,
                 continue
             new_sentence = _clean_output(resp.text).split("\n")[0].strip()
             if not new_sentence or new_sentence == issue.text:
+                rejected += 1
                 skipped += 1
                 continue
             if len(new_sentence) > len(issue.text) * 3 + 40:
+                rejected += 1
                 skipped += 1
                 continue
-            result = result[:idx] + new_sentence + result[idx + len(issue.text):]
+            if recheck:
+                w0, w1 = max(0, start - 200), min(len(result), end + 200)
+                before_tags = _tag_total(result[w0:w1])
+                after_tags = _tag_total(result[w0:start] + new_sentence + result[end:w1])
+                # 容差：单条命中属于噪声，不因此否决改写
+                if after_tags > max(before_tags + 1, 1):
+                    retry = _retry_sentence(client, issue, window, plan,
+                                            extra_system, result[start:end])
+                    if retry:
+                        after_tags = _tag_total(result[w0:start] + retry + result[end:w1])
+                    if not retry or after_tags > max(before_tags + 1, 1):
+                        rejected += 1
+                        skipped += 1
+                        continue
+                    new_sentence = retry
+            if style_guard:
+                win_before = result[w0:w1]
+                win_after = result[w0:start] + new_sentence + result[end:w1]
+                d0, d1 = _style_distance(win_before), _style_distance(win_after)
+                if d0 is not None and d1 is not None and d1 > d0 + 0.05:
+                    retry = _retry_sentence(client, issue, window, plan,
+                                            extra_system, result[start:end])
+                    if retry:
+                        win_after = result[w0:start] + retry + result[end:w1]
+                        d1 = _style_distance(win_after)
+                    if not retry or d1 is None or d1 > d0 + 0.05:
+                        rejected += 1
+                        skipped += 1
+                        continue
+                    new_sentence = retry
+            # 模糊定位可能停在句号前；新句自带标点时补吞原标点，避免出现「。。」
+            while (end < len(result) and result[end] in "。！？；，、"
+                   and new_sentence[-1:] in "。！？；，、"):
+                end += 1
+            result = result[:start] + new_sentence + result[end:]
             applied += 1
             changed = True
         rounds += 1
         if not changed:
             break
+    if applied == 0 and missed == 0 and rejected == 0:
+        note = "无可修订项（没有 severity≥%.1f 的问题）" % min_severity
+    else:
+        note = ("局部替换式修订：应用 %d 处，定位失败 %d 处，改写不合格 %d 处"
+                "（只改命中问题的小句）" % (applied, missed, rejected))
     return RevisionResult(text=result, rounds=rounds, applied=applied, skipped=skipped,
-                          notes=["局部替换式修订：只改命中问题的小句，未整篇重写"])
+                          notes=[note])
 
 
 def restyle(text: str, findings: list[str], client: LLMClient | None, plan: StylePlan, *,
@@ -312,8 +518,27 @@ def restyle(text: str, findings: list[str], client: LLMClient | None, plan: Styl
     if not out:
         return RevisionResult(text=text, rounds=1, applied=0, skipped=len(findings),
                               notes=["模型返回空稿，保留原稿"])
+    if len(text) >= 500 and len(out) < int(len(text) * 0.7):
+        return RevisionResult(
+            text=text, rounds=1, applied=0, skipped=0,
+            notes=["重写稿字数掉到 %.0f%%（%d→%d 字），判定为丢内容，保留原稿"
+                   % (100.0 * len(out) / max(1, len(text)), len(text), len(out))])
+    d0, d1 = _style_distance(text), _style_distance(out)
+    if d0 is not None and d1 is not None and d1 > d0 + 0.15:
+        return RevisionResult(
+            text=text, rounds=1, applied=0, skipped=0,
+            notes=["重写稿离人类池更远（%.2f→%.2f，容忍 +0.15），保留原稿" % (d0, d1)])
+    checks = _fidelity_checks(text, out)
+    if checks["violations"]:
+        return RevisionResult(
+            text=text, rounds=1, applied=0, skipped=0,
+            notes=["重写稿未过保真检查，保留原稿：%s" % "；".join(checks["violations"])])
     return RevisionResult(text=out, rounds=1, applied=len(findings), skipped=0,
-                          notes=["闸门未过 → 按命中条目整篇重写（情节不变）"])
+                          notes=["闸门未过 → 按命中条目整篇重写（情节不变）",
+                                 "保真：字数 %.0f%%｜3-gram 余弦 %.2f｜句长 CV %s｜MTLD %s"
+                                 % (100.0 * checks["ratio"], checks["sim"],
+                                    "→".join("%.2f" % x for x in checks["cv"] if x) or "样本不足",
+                                    "→".join("%.0f" % x for x in checks["mtld"] if x) or "样本不足")])
 
 
 def _window(text: str, snippet: str, span: int = 80) -> dict:
