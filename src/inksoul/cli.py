@@ -164,7 +164,9 @@ def cmd_corpus(args) -> int:
         if rep.max_pair:
             print(f"最像：{rep.max_pair['a']} ↔ {rep.max_pair['b']} = {rep.max_pair['similarity']:.3f}"
                   f"{'（几乎同构）' if rep.max_pair.get('near_identical') else ''}")
-        if rep.min_pair:
+        _mp, _xp = rep.min_pair, rep.max_pair
+        if _mp and (not _xp or (_mp["a"], _mp["b"], round(float(_mp["similarity"]), 9))
+                    != (_xp["a"], _xp["b"], round(float(_xp["similarity"]), 9))):
             print(f"最不像：{rep.min_pair['a']} ↔ {rep.min_pair['b']} = {rep.min_pair['similarity']:.3f}")
         print("每篇与同侪的平均相似度：")
         limit = args.top if getattr(args, "top", 0) > 0 else 10
