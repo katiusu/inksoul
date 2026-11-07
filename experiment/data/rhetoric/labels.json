@@ -1,0 +1,42 @@
+[
+  {
+    "file": "r01_parallel.txt",
+    "label": "修辞性",
+    "desc": "排比（有意复现）"
+  },
+  {
+    "file": "r02_refrain.txt",
+    "label": "修辞性",
+    "desc": "复调/回环（有意复现）"
+  },
+  {
+    "file": "r03_anaphora.txt",
+    "label": "修辞性",
+    "desc": "首语重复（有意复现）"
+  },
+  {
+    "file": "r04_rhythm.txt",
+    "label": "修辞性",
+    "desc": "短句节拍（有意复现）"
+  },
+  {
+    "file": "m01_template.txt",
+    "label": "机械",
+    "desc": "同模板换词"
+  },
+  {
+    "file": "m02_template.txt",
+    "label": "机械",
+    "desc": "同模板换词"
+  },
+  {
+    "file": "m03_template.txt",
+    "label": "机械",
+    "desc": "同模板换词"
+  },
+  {
+    "file": "m04_template.txt",
+    "label": "机械",
+    "desc": "同模板换词"
+  }
+]

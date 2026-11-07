@@ -1,0 +1,44 @@
+[
+  {
+    "file": "t_mock_01.txt",
+    "chars": 388,
+    "source": "template-concat",
+    "seed": 20261031,
+    "note": "模板拼接基线，非模型输出"
+  },
+  {
+    "file": "t_mock_02.txt",
+    "chars": 364,
+    "source": "template-concat",
+    "seed": 20261031,
+    "note": "模板拼接基线，非模型输出"
+  },
+  {
+    "file": "t_mock_03.txt",
+    "chars": 351,
+    "source": "template-concat",
+    "seed": 20261031,
+    "note": "模板拼接基线，非模型输出"
+  },
+  {
+    "file": "t_mock_04.txt",
+    "chars": 364,
+    "source": "template-concat",
+    "seed": 20261031,
+    "note": "模板拼接基线，非模型输出"
+  },
+  {
+    "file": "t_mock_05.txt",
+    "chars": 360,
+    "source": "template-concat",
+    "seed": 20261031,
+    "note": "模板拼接基线，非模型输出"
+  },
+  {
+    "file": "t_mock_06.txt",
+    "chars": 392,
+    "source": "template-concat",
+    "seed": 20261031,
+    "note": "模板拼接基线，非模型输出"
+  }
+]

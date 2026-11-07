@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inksoul"
+version = "0.1.0"
+description = "InkSoul —— 面向 AI Agent 的中文文学创作增强插件（句法指纹 + 文体诊断 + 生成控制）"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "InkSoul Project"}]
+keywords = ["chinese", "stylistics", "writing", "syntax", "nlp", "agent"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Natural Language :: Chinese (Simplified)",
+  "Topic :: Text Processing :: Linguistic",
+]
+# 核心零依赖：jieba 是可选的「分词后端」，不是必须（缺失时给出中文错误提示）
+dependencies = []
+
+[project.optional-dependencies]
+jieba = ["jieba>=0.42"]
+spacy = ["spacy>=3.7"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+inksoul = "inksoul.cli:main"
+
+[project.urls]
+Homepage = "https://example.invalid/inksoul"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+inksoul = ["data/*.txt", "data/*.json"]

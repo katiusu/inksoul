@@ -1,0 +1,7 @@
+HanLP natural language processing toolkit
+LTP neural multi-task natural language processing platform
+Stanza a Python natural language processing toolkit for many human languages
+Weisfeiler-Lehman graph kernels
+Simple fast algorithms for the editing distance between trees and related problems
+Convolution kernels for natural language
+Language modeling is compression

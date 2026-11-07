@@ -1,0 +1,18 @@
+Do LLMs write like humans? Language models change the relationship between text characteristics and being human-written
+Why does ChatGPT delve so much? Exploring the sources of lexical overrepresentation in large language models
+Artificial intelligence and scientific discovery: a model of prioritization and evaluation
+Can large language models generate novel research ideas
+Creative writing with an AI-powered writing assistant
+Same task different story human evaluation of machine translation narratives
+Rethinking creativity evaluation of large language models
+Beyond Turing test evaluating creative writing of large language models
+Dialogue language model degeneration
+The curious case of neural text degeneration
+Neural text generation with unlikelihood training
+Typical decoding for natural language generation
+Contrastive decoding open-ended text generation
+Tree kernels for relation extraction
+Convolution kernels for natural language
+Tree edit distance and related algorithms
+Self-BLEU better automatic evaluation metric for text generation
+Language models are few-shot learners

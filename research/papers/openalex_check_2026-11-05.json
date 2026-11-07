@@ -1,0 +1,208 @@
+{
+ "01": {
+  "doi": "10.1057/s41599-025-05986-3",
+  "title": "Stylometric comparisons of human versus AI-generated creative writing",
+  "year": 2025,
+  "is_oa": true,
+  "status": "gold",
+  "any_url": "https://www.nature.com/articles/s41599-025-05986-3.pdf",
+  "best_pdf": "https://www.nature.com/articles/s41599-025-05986-3.pdf",
+  "best_lic": "cc-by-nc-nd",
+  "cited": 21,
+  "pdf_locs": [
+   {
+    "src": "Humanities and Social Sciences Communications",
+    "pdf": "https://www.nature.com/articles/s41599-025-05986-3.pdf",
+    "lp": "https://doi.org/10.1057/s41599-025-05986-3",
+    "lic": "cc-by-nc-nd",
+    "ver": "publishedVersion"
+   }
+  ]
+ },
+ "02": {
+  "doi": "10.1016/j.system.2024.103494",
+  "title": "A comparative study of thematic choices and thematic progression patterns in human-written and AI-generated texts",
+  "year": 2024,
+  "is_oa": false,
+  "status": "closed",
+  "any_url": null,
+  "best_pdf": null,
+  "best_lic": null,
+  "cited": 18,
+  "pdf_locs": []
+ },
+ "03": {
+  "doi": "10.1038/s41562-026-02550-0",
+  "title": "The shrinking landscape of linguistic diversity in the age of large language models",
+  "year": 2026,
+  "is_oa": true,
+  "status": "green",
+  "any_url": "https://arxiv.org/pdf/2502.11266",
+  "best_pdf": "https://arxiv.org/pdf/2502.11266",
+  "best_lic": null,
+  "cited": 30,
+  "pdf_locs": [
+   {
+    "src": "arXiv (Cornell University)",
+    "pdf": "https://arxiv.org/pdf/2502.11266",
+    "lp": "https://arxiv.org/abs/2502.11266",
+    "lic": null,
+    "ver": "submittedVersion"
+   }
+  ]
+ },
+ "04": {
+  "doi": "10.1016/j.asw.2024.100847",
+  "title": "How syntactic complexity indices predict Chinese L2 writing quality: An analysis of unified dependency syntactically-annotated corpus",
+  "year": 2024,
+  "is_oa": false,
+  "status": "closed",
+  "any_url": null,
+  "best_pdf": null,
+  "best_lic": null,
+  "cited": 23,
+  "pdf_locs": []
+ },
+ "05": {
+  "doi": "10.1057/s41599-024-03510-7",
+  "title": "Measuring linguistic complexity in Chinese: An information-theoretic approach",
+  "year": 2024,
+  "is_oa": true,
+  "status": "gold",
+  "any_url": "https://doi.org/10.1057/s41599-024-03510-7",
+  "best_pdf": null,
+  "best_lic": "cc-by-nc-nd",
+  "cited": 5,
+  "pdf_locs": []
+ },
+ "06": {
+  "doi": "10.1016/j.lingua.2024.103838",
+  "title": "A corpus-driven comparative analysis of AI in academic discourse: Investigating ChatGPT-generated academic texts in social sciences",
+  "year": 2024,
+  "is_oa": true,
+  "status": "green",
+  "any_url": "http://dx.doi.org/10.2139/ssrn.4891634",
+  "best_pdf": null,
+  "best_lic": null,
+  "cited": 27,
+  "pdf_locs": []
+ },
+ "07": {
+  "doi": "10.1073/pnas.2504966122",
+  "title": "Echoes in AI: Quantifying lack of plot diversity in LLM outputs",
+  "year": 2025,
+  "is_oa": true,
+  "status": "hybrid",
+  "any_url": "https://doi.org/10.1073/pnas.2504966122",
+  "best_pdf": null,
+  "best_lic": "cc-by-nc-nd",
+  "cited": 14,
+  "pdf_locs": [
+   {
+    "src": "arXiv (Cornell University)",
+    "pdf": "https://arxiv.org/pdf/2501.00273",
+    "lp": "http://arxiv.org/abs/2501.00273",
+    "lic": "cc-by-nc-nd",
+    "ver": "submittedVersion"
+   }
+  ]
+ },
+ "08": {
+  "doi": "10.18653/v1/2025.ccl-1.64",
+  "error": "<HTTPError 404: 'Not Found'>"
+ },
+ "09": {
+  "doi": "10.1075/ts.24043.yao",
+  "title": "Missing the human touch?",
+  "year": 2025,
+  "is_oa": true,
+  "status": "green",
+  "any_url": "https://arxiv.org/pdf/2506.13013",
+  "best_pdf": "https://arxiv.org/pdf/2506.13013",
+  "best_lic": "public-domain",
+  "cited": 5,
+  "pdf_locs": [
+   {
+    "src": "arXiv (Cornell University)",
+    "pdf": "https://arxiv.org/pdf/2506.13013",
+    "lp": "http://arxiv.org/abs/2506.13013",
+    "lic": "public-domain",
+    "ver": "submittedVersion"
+   }
+  ]
+ },
+ "11": {
+  "doi": "10.1186/s40561-025-00388-z",
+  "title": "A linguistic comparison between ChatGPT-generated and nonnative student-generated short story adaptations: a stylometric approach",
+  "year": 2025,
+  "is_oa": true,
+  "status": "gold",
+  "any_url": "https://slejournal.springeropen.com/counter/pdf/10.1186/s40561-025-00388-z",
+  "best_pdf": "https://slejournal.springeropen.com/counter/pdf/10.1186/s40561-025-00388-z",
+  "best_lic": "cc-by",
+  "cited": 15,
+  "pdf_locs": [
+   {
+    "src": "Smart Learning Environments",
+    "pdf": "https://slejournal.springeropen.com/counter/pdf/10.1186/s40561-025-00388-z",
+    "lp": "https://doi.org/10.1186/s40561-025-00388-z",
+    "lic": "cc-by",
+    "ver": "publishedVersion"
+   }
+  ]
+ },
+ "13": {
+  "doi": "10.18653/v1/2026.acl-long.245",
+  "title": "Who Wrote This Line? Evaluating the Detection of LLM-Generated Classical Chinese Poetry",
+  "year": 2026,
+  "is_oa": true,
+  "status": "hybrid",
+  "any_url": "https://aclanthology.org/2026.acl-long.245.pdf",
+  "best_pdf": "https://aclanthology.org/2026.acl-long.245.pdf",
+  "best_lic": "cc-by",
+  "cited": 2,
+  "pdf_locs": [
+   {
+    "src": "Proceedings of the conference - Association for Computational Linguistics. Meeting",
+    "pdf": "https://aclanthology.org/2026.acl-long.245.pdf",
+    "lp": "https://doi.org/10.18653/v1/2026.acl-long.245",
+    "lic": "cc-by",
+    "ver": "publishedVersion"
+   },
+   {
+    "src": "arXiv (Cornell University)",
+    "pdf": "https://arxiv.org/pdf/2604.10101",
+    "lp": "https://arxiv.org/abs/2604.10101",
+    "lic": "cc-by",
+    "ver": "submittedVersion"
+   }
+  ]
+ },
+ "14": {
+  "doi": "10.1111/ijal.70115",
+  "title": "Do Large Language Models Produce Texts With “Human‐Like” Lexical Diversity? Evidence From Four ChatGPT Models",
+  "year": 2026,
+  "is_oa": true,
+  "status": "bronze",
+  "any_url": "https://onlinelibrary.wiley.com/doi/pdfdirect/10.1111/ijal.70115",
+  "best_pdf": "https://onlinelibrary.wiley.com/doi/pdfdirect/10.1111/ijal.70115",
+  "best_lic": null,
+  "cited": 4,
+  "pdf_locs": [
+   {
+    "src": "International Journal of Applied Linguistics",
+    "pdf": "https://onlinelibrary.wiley.com/doi/pdfdirect/10.1111/ijal.70115",
+    "lp": "https://doi.org/10.1111/ijal.70115",
+    "lic": null,
+    "ver": "publishedVersion"
+   },
+   {
+    "src": "arXiv (Cornell University)",
+    "pdf": "https://arxiv.org/pdf/2508.00086",
+    "lp": "http://arxiv.org/abs/2508.00086",
+    "lic": null,
+    "ver": "submittedVersion"
+   }
+  ]
+ }
+}
