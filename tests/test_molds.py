@@ -23,7 +23,7 @@ def test_catalog_shape():
     keys = [m.key for m in MOLDS]
     assert len(keys) == len(set(keys))
     assert {m.direction for m in MOLDS} <= {"over", "under", "neutral"}
-    assert sum(m.direction == "over" for m in MOLDS) == 14
+    assert sum(m.direction == "over" for m in MOLDS) == 16
     assert sum(m.direction == "under" for m in MOLDS) == 5
 
 
