@@ -522,6 +522,13 @@ def build_parser() -> argparse.ArgumentParser:
     mk.add_argument("--gate", action="store_true", help="按内置闸门出 VERDICT/RECEIPT")
     mk.set_defaults(func=cmd_markers)
 
+    md = sub.add_parser("molds", help="句法模具配额（超上限/缺下限双边判据）")
+    md.add_argument("target", help="正文文件；- 表示读标准输入")
+    md.add_argument("--json", action="store_true", help="输出 JSON")
+    md.add_argument("--min-chars", type=int, default=600,
+                    help="低于该字数不判下限（默认 600）")
+    md.set_defaults(func=cmd_molds)
+
     st = sub.add_parser("style", help="段级风格距离（六维 z + 该改什么）")
     st.add_argument("target", help="段落文件或整章文件")
     st.add_argument("--threshold", type=float, default=1.30, help="超阈阈值（人类 p90 = 1.29）")
@@ -568,6 +575,34 @@ def cmd_markers(args) -> int:
     for n in rep.notes or []:
         print("note: " + n)
     return 0
+
+
+def cmd_molds(args) -> int:
+    """句法模具配额：14 项上限 + 5 项下限，对照 16 本人类网文 p10/p90。"""
+    from .molds import analyze_molds
+
+    if args.target == "-":
+        text = sys.stdin.read()
+        name = "<stdin>"
+    else:
+        path = Path(args.target).expanduser()
+        if not path.is_file():
+            print("错误：找不到文件 %s" % path, file=sys.stderr)
+            return 2
+        text = path.read_text(encoding="utf-8")
+        name = path.name
+    try:
+        rep = analyze_molds(text, min_chars_for_under=max(0, args.min_chars))
+    except ValueError as exc:
+        print("错误：%s" % exc, file=sys.stderr)
+        return 2
+    if args.json:
+        payload = rep.as_dict()
+        payload["file"] = name
+        print(json.dumps(payload, ensure_ascii=False, indent=1))
+        return 0
+    print(rep.as_text())
+    return 0 if rep.verdict == "PASS" else 1
 
 
 def cmd_style(args) -> int:
