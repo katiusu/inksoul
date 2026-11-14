@@ -1,12 +1,13 @@
 {
   "name": "dsh-inksoul",
-  "version": "0.7.0-rc.2",
+  "version": "0.7.0-rc.3",
   "description": "InkSoul —— 给 AI Agent 的中文写作插件：句法骨架诊断、同质对比、文风闸门与生成闭环",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
-    "./cordis.patch.yml": "./cordis.patch.yml"
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./list-agents-compat": "./lib/list-agents-compat.mjs"
   },
   "files": [
     "lib",

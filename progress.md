@@ -114,3 +114,12 @@ logging_setup / cli（6 子命令）/ data/verbs_zh.txt
 - `check_intimacy.py`：新增 `ANATOMY_AMBIGUOUS`（内壁/子宫/尿道/直肠/黏膜），同行无性语境时不判部位名；同步退出码与 HARD_RE 的过时注释。
 - `/root/deslop/run_gates.sh` 命中计数正则改 `^\s*[0-9]+\s+\[(部位名|强禁|语境)\]`（原 `^(HARD|HARD_RE|CTX)` 恒 0）。
 - 验证：254 passed；PTC 实跑 `load_skill("prose-deai")` → `skills=['prose-deai']`、`box.loaded` 同步；111 字含 12 顿号不再阻断，长文本 5b/5c 的 text 均可在正文定位。
+
+## 0.7.0-rc.3 · list_agents 跨版本兼容（2026-11-14）
+- 起因：DSH 0.2.2-rc.1 删掉 `@deepseek-ai/dsh-tool-subagent-control/list-agents` 子路径导出，`list_agents` 改由主包 `lib/index.js` 注册；bundle patch 仍按老写法挂这个插件名，选中对应预设时挂载直接报错（0.2.1 上情况相反：该工具只有独立插件，主包不注册）。
+- 修法：新增 `lib/list-agents-compat.mjs`，以 `dsh-inksoul/list-agents-compat` 子路径导出。运行时 `import()` 那个子路径，成功才 `ctx.plugin({name, inject, apply})` 挂上去，失败静默返回——0.2.2+ 上是空操作（主包已注册），0.2.1 上补回 `list_agents`。
+- `cordis.patch.yml` delegation 组：`tool-subagent-list-agents` 的 name 由 `@deepseek-ai/dsh-tool-subagent-control/list-agents` 换成 `dsh-inksoul/list-agents-compat`。
+- 兼容性证据：0.2.2-rc.1 下两个 shim 都能解析、apply 返回 undefined、不触发 ctx.plugin；用 0.2.1-rc.5 包 + DSH 依赖树做隔离模拟，ctx.plugin 收到 name=tool-subagent-list-agents、inject=["tools","subagents","agents"]。
+- 同步修 `dsh-flash-presets`（v1/v2/v3 三个 preset + 合成产物）：同款 shim 挂成 `dsh-flash-presets/list-agents-compat`，compose-bundle-patch.mjs --check 一致（12314 字符 / 12762 字节）。
+- 版本三处：package.json 0.7.0-rc.3、pyproject.toml 与 src/inksoul/__init__.py 0.7.0rc3；dsh.engines.dsh 保持 >=0.2.0-rc.1（0.2.1 与 0.2.2 都在范围内）。
+- 测试：268 passed；npm pack 39 files / 150301 字节。
