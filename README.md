@@ -36,6 +36,7 @@ dsh plugin --profile web add /path/to/repo    # 从本地目录装
 ### 分段写作流程（预设里是硬约束）
 
 1. **动笔前**：载入 `prose-deai` 与项目 `skills/inksoul-writing`、`skills/inksoul-diagnose`，回复里列出「已载入：…」，否则不算动笔资格。
+   走 `inksoul agent --preset long|short|deai|publish|rewrite` 时，system 里只放一句「用 load_skill 载入 prose-deai / story-xxx」的要求（约 150 字），规范正文由 agent 在侦察阶段自己 `load_skill` 读，不再预先摘录进 prompt；`inksoul presets` 看每档要求载入哪几份、本地装没装、什么版本。
 2. **逐段**：800–1000 字一段 → 落盘 `partNN.md` → `inksoul_style` → `NEAR` 进下一段，`FAR` 按「动作：」那两维只改这一段（最多 3 轮，段内 ≤1.50）。
 3. **收尾**：段落全过后合并成章 → `inksoul_gate` 拿 `VERDICT: PASS` + `RECEIPT` → 交付时给「段号/字数/距离/超阈维度/重写次数」表。
 
@@ -83,6 +84,7 @@ inksoul doctor
 inksoul analyze draft.txt --json
 inksoul gate draft.txt --preset deslop
 inksoul agent "写一段雨夜重逢" --preset deai --out draft.md
+inksoul plan "写一段雨夜重逢" --register 情色   # 语域：文学书面/口语都市/爽文节奏/冷硬悬疑/情色
 ```
 
 引擎细节（指纹算法、基线、PTC 工具面、闸门接线）见 [ENGINE.md](ENGINE.md)。

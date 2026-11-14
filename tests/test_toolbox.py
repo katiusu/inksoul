@@ -1,4 +1,4 @@
-"""标准模式工具面测试：四个工具 + function-calling 循环 + Agent 侦察接线。"""
+"""标准模式工具面测试：五个工具 + function-calling 循环 + Agent 侦察接线。"""
 import json
 import tempfile
 import unittest
@@ -34,9 +34,10 @@ class FakeClient:
 
 
 class TestSchema(unittest.TestCase):
-    def test_four_tools(self):
+    def test_five_tools(self):
         box = ToolBox(make_cfg())
-        self.assertEqual(box.names, ["read_prev", "lookup_bible", "measure", "run_gate"])
+        self.assertEqual(box.names, ["read_prev", "lookup_bible", "measure", "run_gate",
+                                     "load_skill"])
         schema = box.schema()
         self.assertTrue(all(s["type"] == "function" for s in schema))
         self.assertEqual(schema[0]["function"]["name"], "read_prev")
@@ -228,6 +229,50 @@ class TestAgentRecon(unittest.TestCase):
                        for b in bodies
                        if any("资料侦察员" not in str(m.get("content", "")) for m in b["messages"])]
         self.assertTrue(any("侦察：主角叫阿七" in p for p in gen_prompts))
+
+
+class TestLoadSkill(unittest.TestCase):
+    """load_skill：整篇载入、按节取、路径穿越拒绝。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        d = self.root / "story-long-write"
+        d.mkdir()
+        (d / "SKILL.md").write_text(
+            "---\nname: story-long-write\nversion: 1.2.3\n---\n"
+            "## 序\n开场白。\n\n## 核心方法\n先定情绪。\n\n## 写前必读\n先读章纲。\n",
+            encoding="utf-8")
+        self.box = ToolBox(make_cfg(), roots=[self.root])
+        self.box.skill_roots = [self.root]
+
+    def test_loads_whole_body_with_version(self):
+        out = json.loads(self.box.dispatch("load_skill", {"name": "story-long-write"}))
+        self.assertEqual(out["version"], "1.2.3")
+        self.assertIn("核心方法", out["text"])
+        self.assertIn("写前必读", out["text"])      # 不再挑节/丢节
+        self.assertFalse(out["truncated"])
+
+    def test_section_returns_single_block(self):
+        out = json.loads(self.box.dispatch(
+            "load_skill", {"name": "story-long-write", "section": "核心方法"}))
+        self.assertIn("先定情绪", out["text"])
+        self.assertNotIn("写前必读", out["text"])
+
+    def test_limit_truncates(self):
+        out = json.loads(self.box.dispatch(
+            "load_skill", {"name": "story-long-write", "limit": 20}))
+        self.assertTrue(out["truncated"])
+        self.assertLessEqual(len(out["text"]), 20)
+
+    def test_rejects_traversal_and_reports_available(self):
+        for bad in ("../story-long-write", "story-long-write/SKILL.md", ""):
+            out = json.loads(self.box.dispatch("load_skill", {"name": bad}))
+            self.assertIn("error", out)
+        miss = json.loads(self.box.dispatch("load_skill", {"name": "nope"}))
+        self.assertIn("error", miss)
+        self.assertIn("story-long-write", miss["available"])
 
 
 if __name__ == "__main__":

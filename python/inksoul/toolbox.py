@@ -2,9 +2,9 @@
 
 设计约束
 --------
-- **只给四个工具**：读前文 `read_prev`、查设定库 `lookup_bible`、量文体 `measure`、
-  跑闸门 `run_gate`。工具面越窄，模型在参数上胡思乱想的空间越小，每次请求的
-  schema token 也越省。
+- **只给五个工具**：读前文 `read_prev`、查设定库 `lookup_bible`、量文体 `measure`、
+  跑闸门 `run_gate`、载入写作规范 `load_skill`。工具面越窄，模型在参数上胡思乱想的
+  空间越小，每次请求的 schema token 也越省。
 - **只读为主**：`read_prev` / `lookup_bible` 限定在允许根目录（默认当前目录与
   InkSoul 主目录）内，越界直接报错，不做「路径猜谜」。
 - **结果有上限**：每个工具返回 JSON 字符串，正文类结果截断，避免把整本书回灌进上下文。
@@ -28,10 +28,56 @@ _SENT_SPLIT = re.compile(r"[。！？!?…]+|\n+")
 _READ_LIMIT = 200_000
 #: 设定库文件后缀
 _BIBLE_SUFFIX = (".md", ".txt")
+#: skill 名白名单形状：目录名只允许这些字符，防路径穿越
+_SKILL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+#: 单次载入规范的上限（字符）：一篇 SKILL.md 约 6–11k，够整篇读完
+_SKILL_LIMIT = 14000
 
 
 def _dumps(obj) -> str:
     return json.dumps(obj, ensure_ascii=False)
+
+
+def skill_roots(config=None) -> list[Path]:
+    """本地 skill 根目录：环境级在左，项目级在右，左侧优先。"""
+    return [Path(p).expanduser() for p in (
+        "/root/.agents/skills",
+        Path.home() / ".agents" / "skills",
+        Path(getattr(config, "home", ".")).expanduser() / "skills",
+        Path.cwd() / "skills",
+    )]
+
+
+def find_skill(name: str, config=None) -> Path | None:
+    """按名字找 <root>/<name>/SKILL.md；名字走白名单，越界直接当没找到。"""
+    name = str(name or "").strip()
+    if not _SKILL_NAME.match(name):
+        return None
+    for root in skill_roots(config):
+        target = root / name / "SKILL.md"
+        if target.is_file():
+            return target
+    return None
+
+
+def _pick_section(text: str, keyword: str) -> str:
+    """取第一个标题含 keyword 的整节（到下一个同级或更高级标题为止）。"""
+    lines = text.splitlines()
+    start = level = 0
+    for i, line in enumerate(lines):
+        m = re.match(r"^(#{1,4}) (.+)$", line)
+        if m and keyword in m.group(2):
+            start, level = i, len(m.group(1))
+            break
+    if not start:
+        return ""
+    out = [lines[start]]
+    for line in lines[start + 1:]:
+        m = re.match(r"^(#{1,4}) ", line)
+        if m and len(m.group(1)) <= level:
+            break
+        out.append(line)
+    return "\n".join(out).strip()
 
 
 @dataclass(frozen=True)
@@ -73,6 +119,17 @@ def default_specs() -> list[ToolSpec]:
                   "properties": {"text": {"type": "string", "description": "要检查的正文"},
                                  "gate": {"type": "string", "description": "闸门别名：deslop/full/essay/zhuque/off"}},
                   "required": ["text"]}),
+        ToolSpec("load_skill",
+                 "按名字载入本地写作/审查 skill 的完整规范正文（story-long-write / "
+                 "story-short-write / story-review / prose-deai 等）。动笔前先载入投要求的那几份。",
+                 {"type": "object",
+                  "properties": {"name": {"type": "string",
+                                          "description": "skill 名，如 prose-deai、story-long-write"},
+                                 "section": {"type": "string",
+                                             "description": "可选：只取某个二级标题的整节（写标题里的关键词即可）"},
+                                 "limit": {"type": "integer",
+                                           "description": "返回字符上限，默认 14000"}},
+                  "required": ["name"]}),
     ]
 
 
@@ -87,7 +144,10 @@ class ToolBox:
         self.runner = runner
         base = [Path.cwd(), Path(getattr(config, "home", ".")).expanduser()]
         self.roots = [Path(p).expanduser().resolve() for p in (roots or base)]
+        self.skill_roots = skill_roots(config)
         self._specs = default_specs()
+        # 真读到的规范名：agent 的技能前置闸门只认这个集合，不认调用记录里的字符串。
+        self.loaded: set[str] = set()
 
     # ---------------------------------------------------------------- 声明
     def schema(self) -> list[dict]:
@@ -112,6 +172,8 @@ class ToolBox:
                 return _dumps(self._measure(**args))
             if name == "run_gate":
                 return _dumps(self._run_gate(**args))
+            if name == "load_skill":
+                return _dumps(self._load_skill(**args))
             return _dumps({"error": "未知工具：%s（可用：%s）" % (name, "、".join(self.names))})
         except TypeError as exc:
             return _dumps({"error": "参数不对：%s" % exc})
@@ -134,6 +196,46 @@ class ToolBox:
         text = target.read_text(encoding="utf-8", errors="replace")[:_READ_LIMIT]
         keep = max(200, min(int(limit or 3000), 20_000))
         return {"path": str(target.resolve()), "chars": len(text), "text": text[-keep:]}
+
+    def _load_skill(self, name: str = "", section: str = "", limit: int = 0) -> dict:
+        """按名字载入本地 SKILL.md 正文；只认 skill 根目录下的 <name>/SKILL.md。"""
+        name = str(name or "").strip()
+        if not name:
+            return {"error": "name 为空", "available": self._skill_names()}
+        if not _SKILL_NAME.match(name):
+            return {"error": "skill 名不合法：%s" % name, "available": self._skill_names()}
+        for root in self.skill_roots:
+            target = root / name / "SKILL.md"
+            if target.is_file():
+                break
+        else:
+            return {"error": "没找到 skill：%s" % name, "available": self._skill_names()}
+        text = target.read_text(encoding="utf-8", errors="replace")
+        version = ""
+        meta = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+        if meta:
+            for line in meta.group(1).splitlines():
+                if line.strip().startswith("version:"):
+                    version = line.split(":", 1)[1].strip().strip('"')
+            text = text[meta.end():]
+        text = text.strip()
+        self.loaded.add(name)      # 只有真读到正文才记账；失败分支在前面已 return
+        if str(section or "").strip():
+            text = _pick_section(text, str(section).strip()) or text
+        cap = min(max(1, int(limit or _SKILL_LIMIT)), _SKILL_LIMIT)
+        cut = len(text) > cap
+        return {"name": name, "version": version, "path": str(target.resolve()),
+                "chars": len(text), "truncated": cut, "text": text[:cap]}
+
+    def _skill_names(self) -> list[str]:
+        names: list[str] = []
+        for root in self.skill_roots:
+            if not root.is_dir():
+                continue
+            for child in sorted(root.iterdir()):
+                if (child / "SKILL.md").is_file() and child.name not in names:
+                    names.append(child.name)
+        return names
 
     def _bible_files(self) -> list[Path]:
         files: list[Path] = []

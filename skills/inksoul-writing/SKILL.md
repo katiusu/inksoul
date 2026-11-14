@@ -22,22 +22,37 @@ inksoul doctor   # 应显示模型已配置
 
 ## 七档预设
 
-| 档 | 用途 | 候选 | 轮次 | 闸门 |
-| --- | --- | --- | --- | --- |
-| `draft` | 快速出稿 | 3 | 3 | 无 |
-| `long` | 长篇单章 | 3 | 3 | deslop |
-| `short` | 短篇 | 3 | 3 | deslop |
-| `rewrite` | 改写既有稿 | 2 | 2 | 无 |
-| `publish` | 发布前定稿 | 4 | 3 | deslop |
-| `cover` | 封面文案 | 2 | 2 | 无 |
-| `deai` | 去 AI 味一条龙 | 2 | 3 | deslop |
+| 档 | 用途 | 候选 | 轮次 | 目标字数 | 闸门 | 内联规范 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `draft` | 快速出稿 | 1 | 0 | - | 无 | - |
+| `long` | 长篇单章 | 3 | 3 | 3000 | deslop | prose-deai |
+| `short` | 短篇 | 2 | 2 | 1500 | deslop | prose-deai |
+| `rewrite` | 改写既有稿（需 `--from`） | 2 | 2 | - | 无 | prose-deai |
+| `publish` | 成稿 + 发布资料 | 2 | 2 | - | deslop | prose-deai |
+| `cover` | 直出 + 封面提示词 | 1 | 0 | - | 无 | prose-deai |
+| `deai` | 去 AI 味一条龙 | 2 | 3 | 2000 | deslop | prose-deai |
 
-`inksoul --list-presets` 可看当前实际值。优先级：命令行显式 > 预设 > 配置文件。
+这张表由 `AGENT_PRESETS` 生成，不要手改数值；以 `inksoul presets` 的输出为准
+（`--json` 机器可读、`--prompt <档>` 打印该档实际内联的规范文本）。
+优先级：命令行显式 > 预设 > 配置文件。
+
+**内联规范**分两层，互不重复：
+
+- `story.py` 管「这本书怎么写」——按长篇/短篇注入 `story-long-write` / `story-short-write`
+  摘录，审查阶段给 `story-review` 要点；`--deliver publish|cover` 才生成发布资料/封面提示词。
+- `skillpack.SkillPack` 管「字怎么写」——`long/short/rewrite/publish/deai` 注入 `prose-deai`
+  （总预算 6000 字、单 skill 2600，超预算在节边界截断并标注）；`draft`/`cover` 零注入。
+
+story 里的 `story-deslop` 不并进来：去 AI 味只走 `prose-deai` + 闸门，两套规则同时进前缀会
+互相覆盖、把提示词越堆越长。`story` 路由、`story-analyze`/`story-scan`、`story-import`/
+`story-setup` 是工程操作，不进正文提示词。`--no-skills` 关掉 skillpack 这一层，
+`--skills a,b` 换一组。注入位置与字数见 `inksoul presets`。
 
 ## 主用法
 
 ```bash
-inksoul plan --preset long                  # 只看规划，不调模型
+`inksoul presets`                             # 七档参数 + 内联了哪些规范
+`inksoul plan "写第 3 章：雨夜对峙"`           # 只看规划，不调模型
 inksoul agent "写第 3 章：雨夜对峙" --preset long --target-chars 3000
 inksoul agent "改写这段" --preset rewrite --file 旧稿.md
 inksoul agent "写开头" --preset deai --gate off   # 关闸门省 40s

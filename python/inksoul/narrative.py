@@ -153,6 +153,8 @@ class NarrativeReport:
     information_density_per_paragraph: list[dict]
     information_density_mean: float
     information_density_cv: float
+    dunhao_per_kchar: float
+    dunhao_clause_count: int
     pacing_notes: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -172,6 +174,8 @@ class NarrativeReport:
             "information_density_per_paragraph": self.information_density_per_paragraph,
             "information_density_mean": _r(self.information_density_mean),
             "information_density_cv": _r(self.information_density_cv),
+            "dunhao_per_kchar": _r(self.dunhao_per_kchar),
+            "dunhao_clause_count": self.dunhao_clause_count,
             "pacing_notes": list(self.pacing_notes),
             "notes": list(self.notes),
         }
@@ -293,6 +297,24 @@ def _scene(doc: Document, clauses: list[Clause]) -> tuple[int, int, dict[str, in
             para_shifts += 1
 
     return clause_shifts, para_shifts, dict(sorted(counter.items(), key=lambda kv: -kv[1]))
+
+
+def _dunhao(doc: Document) -> tuple[float, int]:
+    """顿号密度（每千汉字）与「单句 ≥3 个顿号」的句数。
+
+    密度衡量整体滥用；句数抓清单式罗列。两者都不判「整句有没有动作」——
+    那需要动词标注，本模块只有词表，硬判会误伤（低置信）。
+    """
+    text = getattr(doc, "text", "") or ""
+    han = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    if han <= 0:
+        return 0.0, 0
+    clusters = 0
+    for sent in (getattr(doc, "sentences", None) or []):
+        s = getattr(sent, "text", "") or ""
+        if s.count("、") >= 3:
+            clusters += 1
+    return text.count("、") * 1000.0 / han, clusters
 
 
 def _dialogue_beats(doc: Document) -> tuple[int, int, int]:
@@ -435,6 +457,7 @@ def analyze_narrative(doc: Document) -> NarrativeReport:
     dialogue_ratio = dialogue_char_ratio(doc)
     verbs, verb_total = _speech_verbs(doc)
     density_rows, density_mean, density_cv = _information_density(doc)
+    dunhao_per, dunhao_clauses = _dunhao(doc)
 
     pacing = _pacing_notes(
         clause_count=len(clauses),
@@ -477,6 +500,8 @@ def analyze_narrative(doc: Document) -> NarrativeReport:
         information_density_per_paragraph=density_rows,
         information_density_mean=density_mean,
         information_density_cv=density_cv,
+        dunhao_per_kchar=dunhao_per,
+        dunhao_clause_count=dunhao_clauses,
         pacing_notes=pacing,
         notes=notes,
     )

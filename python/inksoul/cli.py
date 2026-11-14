@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -211,7 +212,8 @@ def cmd_plan(args) -> int:
 
     if getattr(args, "target_chars", 0):
         cfg.generation.target_chars = int(args.target_chars)
-    plan = GenerationController(cfg).plan(args.brief, genre=args.genre, perspective=args.perspective)
+    plan = GenerationController(cfg).plan(args.brief, genre=args.genre, register=args.register,
+                                        perspective=args.perspective)
     print(json.dumps(plan.as_dict() if hasattr(plan, "as_dict") else plan, ensure_ascii=False, indent=2))
     return 0
 
@@ -225,7 +227,8 @@ def cmd_generate(args) -> int:
         cfg.generation.target_chars = int(args.target_chars)
     ctrl = GenerationController(cfg)
     try:
-        result = ctrl.generate(args.brief, genre=args.genre, perspective=args.perspective,
+        result = ctrl.generate(args.brief, genre=args.genre, register=args.register,
+                               perspective=args.perspective,
                                max_rounds=args.rounds, offline=args.offline)
     except ModelAPIError as exc:
         print(f"生成失败：{exc}", file=sys.stderr)
@@ -245,14 +248,79 @@ def cmd_generate(args) -> int:
     return 0
 
 
+def cmd_presets(args) -> int:
+    """预设档规范：AGENT_PRESETS 是唯一事实来源；规范不再内联，只报「要求载入哪几份」。"""
+    from .story import load_skill_block
+    from .toolbox import find_skill
+
+    config = load_config(getattr(args, "config", None))
+
+    def _version(name: str) -> str:
+        """装没装 + 版本：读 SKILL.md 的 frontmatter，读不到就算没装。"""
+        path = find_skill(name, config)
+        if not path:
+            return ""
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")[:600]
+        except OSError:
+            return ""
+        m = re.search(r"^version:\s*(.+)$", text, re.M)
+        return m.group(1).strip().strip('"') if m else ""
+
+    want = getattr(args, "prompt", "") or ""
+    if want:
+        block = load_skill_block(AGENT_PRESETS[want].skills)
+        if not block:
+            print("预设 %s 不要求载入写作规范" % want, file=sys.stderr)
+            return 2
+        print(block)
+        return 0
+
+    def _row(name: str) -> dict:
+        path = find_skill(name, config)
+        return {"name": name, "present": bool(path),
+                "version": _version(name),
+                "path": str(path) if path else ""}
+
+    if getattr(args, "json", False):
+        rows = []
+        for p in AGENT_PRESETS.values():
+            rows.append({
+                "name": p.name, "story": p.story, "candidates": p.candidates,
+                "rounds": p.max_rounds, "target_chars": p.target_chars,
+                "deliver": p.deliver, "require_from": p.require_from,
+                "gate": p.gate, "desc": p.desc,
+                "skills": [_row(n) for n in p.skills],
+                "prompt": load_skill_block(p.skills),
+            })
+        print(json.dumps(rows, ensure_ascii=False, indent=1))
+        return 0
+    print("%-8s %-16s %-4s %-4s %-6s %-8s %-4s %s" % (
+        "预设", "要求载入", "候选", "轮次", "目标", "闸门", "续写", "说明"))
+    for p in AGENT_PRESETS.values():
+        marks = []
+        for n in p.skills:
+            path = find_skill(n, config)
+            marks.append("%s(%s)" % (n, (_version(n) or "无版本") if path else "缺失"))
+        print("%-8s %-16s %-4d %-4d %-6s %-8s %-4s %s" % (
+            p.name, ",".join(marks) or "-", p.candidates, p.max_rounds,
+            p.target_chars or "-", p.gate or "-", "是" if p.require_from else "-", p.desc))
+        missing = [n for n in p.skills if not find_skill(n, config)]
+        if missing:
+            print("  ! 本地未装：%s（模型会读不到而报缺）" % "、".join(missing))
+    return 0
+
+
 def cmd_agent(args) -> int:
     from .config import merge_preset, resolve_gate, resolve_preset
 
     if getattr(args, "list_presets", False):
-        print("%-8s %-6s %-6s %-6s %-10s %-8s %s" % ("预设", "story", "候选", "轮次", "目标字数", "闸门", "说明"))
+        print("%-8s %-16s %-6s %-6s %-10s %-8s %s" % (
+            "预设", "要求载入", "候选", "轮次", "目标字数", "闸门", "说明"))
         for p in AGENT_PRESETS.values():
-            print("%-8s %-6s %-6d %-6d %-10s %-8s %s" % (p.name, p.story, p.candidates, p.max_rounds,
-                                                    p.target_chars or "-", p.gate or "-", p.desc))
+            print("%-8s %-10s %-6d %-6d %-10s %-8s %s" % (
+                p.name, ",".join(p.skills) or "-", p.candidates, p.max_rounds,
+                p.target_chars or "-", p.gate or "-", p.desc))
         return 0
     if not args.brief:
         print("缺少题材：inksoul agent \"题材…\"；或用 --list-presets 看预设", file=sys.stderr)
@@ -266,8 +334,12 @@ def cmd_agent(args) -> int:
                           deliver=args.deliver, gate=args.gate)
     story, candidates = picked["story"], picked["candidates"]
     rounds, target_chars, deliver = picked["max_rounds"], picked["target_chars"], picked["deliver"]
+    skills = ([] if getattr(args, "no_skills", False)
+              else [x.strip() for x in (args.skills or "").split(",") if x.strip()]
+              or list(picked["skills"]))
     if preset:
-        print("预设：%s（%s）" % (preset.name, preset.desc))
+        tail = "，要求载入 %s" % "、".join(skills) if skills else "，不要求载入规范"
+        print("预设：%s（%s%s）" % (preset.name, preset.desc, tail))
     cfg = load_config(args.config)
     setup_logging(cfg)
     from .agent import WritingAgent
@@ -275,9 +347,10 @@ def cmd_agent(args) -> int:
     gate_cmd = resolve_gate(picked["gate"])
     agent = WritingAgent(cfg, gate_cmd=gate_cmd, story=story,
                          tool_mode=args.tool_mode or ("ptc" if args.tools else ""),
-                         tool_steps=args.tool_steps)
+                         tool_steps=args.tool_steps, skills=skills)
     try:
-        result = agent.run(args.brief, genre=args.genre, perspective=args.perspective,
+        result = agent.run(args.brief, genre=args.genre, register=args.register,
+                           perspective=args.perspective,
                            target_chars=target_chars, candidates=candidates,
                            max_rounds=rounds, out=args.out,
                            report_path=args.report, offline=args.offline,
@@ -322,7 +395,7 @@ def cmd_skills(args) -> int:
         if skill.description:
             print(skill.description)
         print()
-        print(skill.excerpt(args.chars) if args.chars else skill.body)
+        print(skill.body[:args.chars] if args.chars else skill.body)
         return 0
     pack = StoryPack(mode=args.mode or "auto", target_chars=args.target_chars)
     for note in pack.notes:
@@ -440,7 +513,9 @@ def build_parser() -> argparse.ArgumentParser:
     g = sub.add_parser("generate", help="按创作要求生成并自检修订")
     g.add_argument("brief", help="创作要求")
     g.add_argument("--genre", default=None)
-    g.add_argument("--perspective", default=None)
+    g.add_argument("--register", default="文学书面",
+                   help="语域：文学书面/口语都市/爽文快推/冷硬悬疑/情色直写/场景速写")
+    g.add_argument("--perspective", default="", help="叙事视角：第一人称 / 第三人称限制视角 / 全知；留空按体裁，小说默认第三人称限制视角，散文默认第一人称")
     g.add_argument("--rounds", type=int, default=2)
     g.add_argument("--out", default=None)
     g.add_argument("--target-chars", type=int, default=0, help="目标篇幅（字）")
@@ -454,7 +529,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="预设档：draft/long/short/rewrite/publish/cover；显式参数优先")
     ag.add_argument("--list-presets", action="store_true", help="列出预设档后退出")
     ag.add_argument("--genre", default=None)
-    ag.add_argument("--perspective", default=None)
+    ag.add_argument("--register", default="文学书面",
+                    help="语域：文学书面/口语都市/爽文快推/冷硬悬疑/情色直写/场景速写")
+    ag.add_argument("--perspective", default="", help="叙事视角：第一人称 / 第三人称限制视角 / 全知；留空按体裁，小说默认第三人称限制视角，散文默认第一人称")
     ag.add_argument("--rounds", type=int, default=None, help="改进轮数上限（默认取配置，缺省 3）")
     ag.add_argument("--candidates", type=int, default=None, help="候选稿数（默认取配置）")
     ag.add_argument("--target-chars", type=int, default=0)
@@ -470,6 +547,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="工具轮数上限（ptc 默认 2 段程序，standard 默认 3 轮）")
     ag.add_argument("--story", default="", choices=["", "auto", "long", "short", "off"],
                     help="注入本地 story 写作规范：auto/long/short/off（默认取配置）")
+    ag.add_argument("--skills", default=None,
+                    help="内联的写作规范 skill，逗号分隔（默认取预设，如 prose-deai）")
+    ag.add_argument("--no-skills", action="store_true", help="不内联任何写作规范")
     ag.add_argument("--from", dest="from_path", default=None,
                     help="续写：已有前文路径（story-import 口径，取尾部 3000 字进提示）")
     ag.add_argument("--ref", action="append", default=[],
@@ -479,10 +559,18 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--offline", action="store_true", help="不调模型，只校验配置")
     ag.set_defaults(func=cmd_agent)
 
+    ps = sub.add_parser("presets", help="预设档规范：参数 + 要求载入的 skill 与版本")
+    ps.add_argument("--json", action="store_true", help="机器可读输出")
+    ps.add_argument("--prompt", default="", choices=[""] + list(AGENT_PRESETS),
+                    help="打印该档的「去载入」要求文本")
+    ps.set_defaults(func=cmd_presets)
+
     pl = sub.add_parser("plan", help="只输出文体规划")
     pl.add_argument("brief")
     pl.add_argument("--genre", default=None)
-    pl.add_argument("--perspective", default=None)
+    pl.add_argument("--register", default="文学书面",
+                    help="语域：文学书面/口语都市/爽文快推/冷硬悬疑/情色直写/场景速写")
+    pl.add_argument("--perspective", default="", help="叙事视角：第一人称 / 第三人称限制视角 / 全知；留空按体裁，小说默认第三人称限制视角，散文默认第一人称")
     pl.add_argument("--target-chars", type=int, default=0)
     pl.set_defaults(func=cmd_plan)
 
@@ -522,6 +610,11 @@ def build_parser() -> argparse.ArgumentParser:
     mk.add_argument("--gate", action="store_true", help="按内置闸门出 VERDICT/RECEIPT")
     mk.set_defaults(func=cmd_markers)
 
+    md = sub.add_parser("molds", help="句法模具配额（段级基线 + 复合偏离 z，只诊断）")
+    md.add_argument("target", help="正文文件；- 表示读标准输入")
+    md.add_argument("--json", action="store_true", help="输出 JSON")
+    md.set_defaults(func=cmd_molds)
+
     st = sub.add_parser("style", help="段级风格距离（六维 z + 该改什么）")
     st.add_argument("target", help="段落文件或整章文件")
     st.add_argument("--threshold", type=float, default=1.30, help="超阈阈值（人类 p90 = 1.29）")
@@ -530,6 +623,34 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("doctor", help="环境自检")
     d.set_defaults(func=cmd_doctor)
     return p
+
+
+def cmd_molds(args) -> int:
+    """句法模具配额：段级基线的复合偏离 z；超人类段 p95 才判 DRIFT。"""
+    from .molds import analyze_molds
+
+    if args.target == "-":
+        text = sys.stdin.read()
+        name = "<stdin>"
+    else:
+        path = Path(args.target).expanduser()
+        if not path.is_file():
+            print("错误：找不到文件 %s" % path, file=sys.stderr)
+            return 2
+        text = path.read_text(encoding="utf-8")
+        name = path.name
+    try:
+        rep = analyze_molds(text)
+    except ValueError as exc:
+        print("错误：%s" % exc, file=sys.stderr)
+        return 2
+    if args.json:
+        payload = rep.as_dict()
+        payload["file"] = name
+        print(json.dumps(payload, ensure_ascii=False, indent=1))
+        return 0
+    print(rep.as_text())
+    return 0 if rep.verdict in ("PASS", "INSUFFICIENT") else 1
 
 
 def cmd_markers(args) -> int:

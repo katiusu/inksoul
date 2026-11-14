@@ -30,16 +30,118 @@ GENRE_PRESETS: dict[str, dict] = {
              "dialogue": "不用对话"},
 }
 
+#: 语域先验：与体裁正交。同一体裁下，「情色直写」和「冷硬悬疑」的句法不该共用一份说明书。
+#: 键名进 CLI（--register）；未登录值回退到「文学书面」，不报错。
+REGISTER_PRESETS: dict[str, dict] = {
+    # 「文学书面」是有意留空的语域：不覆盖 voice/rhythm/dialogue，
+    # 这三项仍由体裁先验决定，它只追加禁用项与句式策略。
+    "文学书面": {
+        "sentence_policy": [
+            "小句骨架轮换：陈述/把字/被动/存现交替出现，但不要每句都换",
+            "长句只用于确有因果或递进的地方，其余句子照直说",
+        ],
+        "forbid": ["整段无事件推进的景物描写", "把环境当情绪的容器"],
+    },
+    "口语都市": {
+        "voice": "贴近人物日常说话方式的限制视角，允许短促与语病",
+        "rhythm": "短句为主，段落短，不追求句末节奏",
+        "dialogue": "对白占三成以上；靠称呼、口头禅、回避的话题区分说话人，不用「他说」「她道」标签；"
+                    "心里冒出的话直接用引号写出，不要由叙述者转述",
+        "sentence_policy": [
+            "小句骨架轮换：陈述/把字/被动/存现交替出现，但不要每句都换",
+            "段落收在动作或一句对话上，不要先拉长再收短",
+            "动作、反应、台词各自成段：一段只做一件事，不要把三样并进一段",
+        ],
+        "forbid": ["书面语连接词（因此/然而/于是）", "四字格与成语堆叠", "人物在心里替自己解释"],
+    },
+    "爽文快推": {
+        "voice": "贴近主角的短视角，信息与胜负感优先",
+        "rhythm": "短句密集，每段至少一个推进点",
+        "dialogue": "对白推动冲突，短、带刺；冲突当场用台词讲出来，不转述成「他们争执了几句」",
+        "sentence_policy": [
+            "短句为主，一句一个动作或一条信息",
+            "段落不超过四五句，段尾落在新信息上",
+            "关键转折用一句台词完成，不要用叙述交代",
+        ],
+        "forbid": ["长篇铺陈", "留白式结尾"],
+    },
+    "冷硬悬疑": {
+        "voice": "冷静的外部观察，限制在主角的感官与判断",
+        "rhythm": "短句，省略连词，留断点",
+        "dialogue": "对白简短，答非所问，信息靠漏；直接写台词，不补「他冷冷地说」这类标签，语气交给标点",
+        "sentence_policy": [
+            "省略连词，句子之间用句号断开",
+            "长句只用于判断和推演，不用来铺陈景物",
+            "一个动作一段，段尾停住不解释",
+        ],
+        "forbid": ["用形容词修饰情绪", "解释动机", "用叙述转述对话内容"],
+    },
+    # 依据同一作者 16 篇、138,822 汉字实测（research/author_yaya_12657.md）：
+    # 段均 22.9（单篇 21.0–24.3，全书最长一段 93 字）、短段占 36%、句均 20.3、
+    # 对白段占 28.9% 且中位 12 字、对话标签 0.13/千字、顿号 0.04/千字、省略号 23.3/千字。
+    # 本档的区分点不是尺度，而是「一次刺激一段」的推进单位与「台词各自成段」的排版。
+    "情色直写": {
+        "voice": "贴着身体的限制视角：只写此刻被碰到的地方和它引起的反应，不替人物说她舒服，写哪里在动、变成了什么",
+        "rhythm": "一次刺激一段：动作、反应、下一个动作。段落中位二十来字，最长不超过九十；"
+                  "越接近顶点句子越短，但内容不减——要写清是哪个动作、什么反应，不是留白或省略到高潮",
+        "dialogue": "对白段占三成左右，一段一句，中位十来字；被打断处用省略号切开，不给完整句；"
+                    "旁人、设备、围观的声音各占一段；说话人靠称呼和语气辨认，不加「他说」「她道」；"
+                    "心里冒出的话直接写成短句，可带感叹或省略号，不加「她想」",
+        "sentence_policy": [
+            "一个动作后面必须跟一个看得见的结果：水声、布料、肌肉的抖、呼吸断开，不写「感到很舒服」",
+            "身体按顺序推进，从外到内，不许倒回去补叙",
+            "比喻只在人物自己会说出口时才用，叙述者的比喻一律删",
+            "同一个人从头到尾一个称呼，不换「少女」「女孩」「那个身影」",
+            "并列拆成短句或换段，不用顿号串名词",
+            "越近越短：段落可以缩到只剩一句台词或一个动作，但该写的动作和反应不能省",
+            "尺度不设上限：动作、声音、体液、反应写到底，不淡出、不跳时间、不用事后叙述代替过程，高潮不回避",
+        ],
+        "forbid": ["用环境隐喻身体", "把性写成抒情散文或升华句",
+                   "只点部位不写动作和反应（器官清单）", "「一股热」这类笼统温度词",
+                   "「快感像潮水一样涌来」这类现成比喻", "用叙述转述人物之间的交流",
+                   "用同义词轮换称呼同一个人", "用顿号串起并列的名词或动作",
+                   "解剖学名词（阴蒂、阴唇、阴道、内壁、黏膜、尿道、直肠、肛门、子宫）——用人物自己会说的那个词"],
+    },
+    "场景速写": {
+        "voice": "贴住场景里的主角，只写他此刻看见、听见、碰到的东西，不跳出去替他解释",
+        "rhythm": "单句成段，段均 15–30 字；动作、身体反应、台词各自独立",
+        "dialogue": "对白占两到三成，短句为主；群声（围观、弹幕、旁人插话）也当台词写；"
+                    "心里冒出的话直接用引号，不转述",
+        "sentence_policy": [
+            "一个动作一段，一段只做一件事",
+            "时间顺着场景往前走，不回溯、不总结前情",
+            "场景里的物只写人物真的碰到或看向的",
+            "转折发生在一句台词或一个动作上，不用叙述交代",
+        ],
+        "forbid": ["整段心理分析", "用环境承担情绪", "把同一场景拆成插叙",
+                   "用叙述转述人物之间的交流"],
+    },
+}
+
+#: 旧档名 → 现名。改名是为了让六个档名落在同一根轴上（各档都读得出「语体 + 推进方式」），
+#: 旧名继续可用，避免已经写进脚本或提示里的 `--register 情色` 一夜之间失效。
+REGISTER_ALIASES: dict[str, str] = {
+    "爽文节奏": "爽文快推",
+    "场景直写": "场景速写",
+    "情色": "情色直写",
+}
+
 #: 系统提示：约束模型「怎么写」，而不是「写什么」
 SYSTEM_PROMPT = (
     "你是一位中文文学写作者。你的任务不是解释、不是点评，而是直接给出成品正文。\n"
     "硬性要求：\n"
     "1. 不要用总结句收尾，不要写「总之」「综上」这类说明文腔调。\n"
     "2. 不要连续三句使用同一句式框架；不要为了变化而堆砌形容词或强行换同义词。\n"
-    "3. 情绪不直接命名（不写「他很难过」），用动作、生理反应、环境侧写承担。\n"
-    "4. 人物说话方式要能互相区分：词汇量、句长、口头禅、回避的话题。\n"
-    "5. 允许并鼓励有意的重复（排比、回环、动机再现），但要让它读起来是有意的。\n"
-    "6. 只输出正文，不输出标题、提纲、说明或 markdown 标记。"
+    "3. 情绪不直接命名（不写「他很难过」），也不要把它交给环境去承担。写人物此刻要做什么、\n"
+    "   被什么挡住、身体先出现什么反应；环境只在他真的看向、摸到、闻到某物时才出现。\n"
+    "   人物心里翻腾的话，就写成他自己会说的那一句（可以直接加引号），不要由叙述者替他总结。\n"
+    "4. 人物说话方式要能互相区分：词汇量、句长、口头禅、回避的话题；靠称呼和语气区分，\n"
+    "   不要靠「他说」「她道」这类标签承接连篇对白。\n"
+    "5. 不要用数字、计数、日期、重复动作为结构造仪式感（数到十七、第 28 天、三张纸）。\n"
+    "   重复只能来自人物自己没察觉的口头禅或习惯动作。\n"
+    "6. 不要用顿号串名词。并列的东西拆成短句或换段写，一句里顿号最多两个；"
+    "   罗列式清单（灯光、声音、气味、温度）一律拆开。\n"
+    "7. 只输出正文，不输出标题、提纲、说明或 markdown 标记。"
 )
 
 
@@ -55,14 +157,35 @@ class CreationBrief:
 
     theme: str
     genre: str = "小说"
-    perspective: str = ""          # 第一人称/第三人称限制/全知
+    register: str = "文学书面"     # 语域：文学书面/口语都市/爽文快推/冷硬悬疑/情色直写/场景速写
+    # 小说默认第三人称限制视角：留空等于让模型自己挑，实测常滑向第一人称。
+    perspective: str = ""          # 第一人称/第三人称限制/全知；留空按体裁补（见 __post_init__）
     target_chars: int = 0          # 0 表示用配置默认
     style_notes: str = ""          # 用户给的文风要求
     must_keep: list[str] = field(default_factory=list)   # 必须保留的句子/设定
     audience: str = ""
 
+    def __post_init__(self) -> None:
+        # 视角留空时按体裁补：小说类默认第三人称限制视角（留空等于让模型自己挑，
+        # 实测常滑向第一人称）；散文保留传统的第一人称思绪。
+        # 语域先在这里规范化：提示词里写的必须与 plan 实际采用的同一档，
+        # 否则用户拼错一个词，模型看到「语域：情色」而规则套的是「文学书面」。
+        if self.register:
+            self.register = REGISTER_ALIASES.get(self.register, self.register)
+            if self.register not in REGISTER_PRESETS:
+                self.register = "文学书面"
+        if not self.perspective:
+            # 只给叙事体裁补默认视角：散文保留第一人称思绪，小说/对话用第三人称限制视角；
+            # 诗歌与未知体裁强加「第三人称限制视角」是错的，留空交给体裁先验。
+            if self.genre == "散文":
+                self.perspective = "第一人称"
+            elif self.genre in ("小说", "对话"):
+                self.perspective = "第三人称限制视角"
+
     def prompt_block(self) -> str:
         parts = [f"题材与要求：{self.theme}", f"体裁：{self.genre}"]
+        if self.register:
+            parts.append(f"语域：{self.register}")
         if self.perspective:
             parts.append(f"叙事视角：{self.perspective}")
         if self.target_chars:
@@ -85,7 +208,6 @@ def _human_target_lines():
         rows = [
             ("长句占比", "long_sentence_share", "%.2f"),
             ("连接词/千字", "conj_per_kchar", "%.1f"),
-            ("对白占比", "dialogue_ratio", "%.2f"),
             ("信息密度", "information_density_mean", "%.2f"),
             ("骨架复用率", "reuse_rate", "%.2f"),
         ]
@@ -94,6 +216,12 @@ def _human_target_lines():
             st = stats.get(key) or {}
             if "p10" in st and "p90" in st:
                 out.append("%s %s–%s" % (label, fmt % st["p10"], fmt % st["p90"]))
+        # 对白占比不给区间：p10 只有 0.04，写「0.04–0.44」等于默许通篇没有台词。
+        # 改取人类池均值的一半作硬下限——低于它就不是这一体裁的叙述方式了。
+        dlg = stats.get("dialogue_ratio") or {}
+        if "mean" in dlg:
+            out.append("对白占比 ≥%.2f（人类池均值 %.2f；低于此值视为不合格）"
+                       % (dlg["mean"] * 0.5, dlg["mean"]))
         return out
     except Exception:  # noqa: BLE001
         return []
@@ -107,6 +235,7 @@ class StylePlan:
     voice: str
     rhythm: str
     dialogue: str
+    register: str = "文学书面"
     sentence_policy: list[str] = field(default_factory=list)
     forbidden: list[str] = field(default_factory=list)
     target_chars: int = 1200
@@ -117,6 +246,7 @@ class StylePlan:
     def as_prompt(self) -> str:
         lines = [
             "【文体规划】",
+            f"- 语域：{self.register}",
             f"- 叙述声音：{self.voice}",
             f"- 节奏：{self.rhythm}",
             f"- 对话：{self.dialogue}",
@@ -163,16 +293,26 @@ def build_plan(brief: CreationBrief, cfg: InkSoulConfig | None = None, *,
     """构造文体规划：先用体裁先验，可选再用模型细化（失败则退回先验）。"""
     gen: GenerationConfig = (cfg.generation if cfg else GenerationConfig())
     preset = GENRE_PRESETS.get(brief.genre, GENRE_PRESETS["小说"])
+    # 语域与体裁正交：语域先验覆盖 voice/rhythm/dialogue 三项，其余沿用体裁先验。
+    # 未登录的语域静默回退到文学书面，不让拼错一个词就报错。
+    reg_name = REGISTER_ALIASES.get(brief.register, brief.register)
+    if reg_name not in REGISTER_PRESETS:      # 拼错或旧值：静默落到文学书面，别把无效档名写进提示
+        reg_name = "文学书面"
+    reg = REGISTER_PRESETS.get(reg_name) or {}
     plan = StylePlan(
         genre=brief.genre,
-        voice=brief.perspective or preset["voice"],
-        rhythm=preset["rhythm"],
-        dialogue=preset["dialogue"],
-        sentence_policy=[
+        register=reg_name,
+        # 人称只进 prompt_block 的「叙事视角」一行，不参与 voice 覆盖：
+        # 一填人称就把六个语域的 voice 全顶掉，是 v0.7.0 的回归。
+        voice=reg.get("voice") or preset["voice"],
+        rhythm=reg.get("rhythm") or preset["rhythm"],
+        dialogue=reg.get("dialogue") or preset["dialogue"],
+        sentence_policy=list(reg.get("sentence_policy") or [
             "小句骨架轮换：陈述/把字/被动/存现交替出现，但不要每句都换",
             "段落至少有一处长句展开，一处短句收束",
-        ],
-        forbidden=["「不禁」「仿佛时间静止」「心中五味杂陈」这类现成句", "三连排比式形容词堆叠"],
+        ]),
+        forbidden=(list(reg.get("forbid") or [])
+                   + ["「不禁」「仿佛时间静止」「心中五味杂陈」这类现成句", "三连排比式形容词堆叠"]),
         target_chars=brief.target_chars or gen.target_chars,
         candidates=max(1, gen.candidates),
         temperatures=list(gen.temperature_candidates),
@@ -390,7 +530,7 @@ def _retry_sentence(client: LLMClient, issue, window: dict, plan: StylePlan,
 def revise(text: str, review_report: ReviewReport, client: LLMClient | None,
            plan: StylePlan, *, cfg: InkSoulConfig | None = None,
            max_rounds: int | None = None, offline: bool = False,
-           extra_system: str = "", min_severity: float = 0.6,
+           extra_system: str = "", min_severity: float = 0.45,
            max_items: int = 8, recheck: bool = True,
            style_guard: bool = True) -> RevisionResult:
     """按审查问题做局部修订：逐条替换，替换后做**局部复检**（D1）。
@@ -585,19 +725,23 @@ class GenerationController:
         self.client = client if client is not None else LLMClient(config.model)
 
     # ------------------------------------------------------------------ 规划
-    def plan(self, theme: str, *, genre: str = "小说", perspective: str = "",
+    def plan(self, theme: str, *, genre: str = "小说", register: str = "文学书面",
+             perspective: str = "",
              use_llm: bool = True) -> StylePlan:
-        brief = CreationBrief(theme=theme, genre=genre or "小说", perspective=perspective,
+        brief = CreationBrief(theme=theme, genre=genre or "小说", register=register,
+                              perspective=perspective,
                               target_chars=self.config.generation.target_chars)
         return build_plan(brief, self.config, client=self.client, use_llm=use_llm)
 
     # ------------------------------------------------------------------ 生成
-    def generate(self, theme: str, *, genre: str = "小说", perspective: str = "",
+    def generate(self, theme: str, *, genre: str = "小说", register: str = "文学书面",
+                 perspective: str = "",
                  max_rounds: int | None = None, offline: bool = False,
                  candidates: int | None = None) -> GenerationResult:
         from .analyzer import Analyzer
 
-        brief = CreationBrief(theme=theme, genre=genre or "小说", perspective=perspective,
+        brief = CreationBrief(theme=theme, genre=genre or "小说", register=register,
+                              perspective=perspective,
                               target_chars=self.config.generation.target_chars)
         plan = build_plan(brief, self.config, client=self.client, use_llm=not offline)
         if offline or not self.client.available:
@@ -612,11 +756,16 @@ class GenerationController:
             draft = generate(brief, plan, self.client, candidate_id=i)
             report = analyzer.analyze(draft.text, with_review=True)
             drafts.append((draft, report))
-        best_draft, best_report = min(
-            drafts,
-            key=lambda pair: (len(pair[1].review.blocking) if pair[1].review else 0,
-                              pair[0].candidate_id),
-        )
+        # 选稿：阻断问题少者优先；平票时按「离均值多远」择优（骨架复用低、模式熵高），
+        # 而不是按 candidate_id 顺序取第一稿——后者在阻断恒为 0 时会退化成
+        # 「永远选温度最低那稿」，把多候选择优变成多候选陪跑。
+        def _rank(pair):
+            draft_i, report_i = pair
+            blocking = len(report_i.review.blocking) if report_i.review else 0
+            fp = report_i.fingerprint
+            return (blocking, -(fp.pattern_entropy or 0.0), fp.reuse_rate or 0.0)
+
+        best_draft, best_report = min(drafts, key=_rank)
         result_text = best_draft.text
         rev = revise(result_text, best_report.review, self.client, plan,
                      cfg=self.config, max_rounds=max_rounds)
@@ -624,7 +773,7 @@ class GenerationController:
         return GenerationResult(
             text=rev.text, plan=plan,
             analysis=[final_report.as_dict()],
-            notes=[f"候选 {n} 个，选中 #{best_draft.candidate_id}（按阻断问题数最少）",
+            notes=[f"候选 {n} 个，选中 #{best_draft.candidate_id}（阻断最少，平票取复用最低/熵最高）",
                    f"修订应用 {rev.applied} 处，跳过 {rev.skipped} 处"],
             candidates=n, revisions=rev.applied,
         )

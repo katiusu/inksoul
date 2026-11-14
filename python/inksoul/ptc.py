@@ -91,7 +91,9 @@ box.gate_cmd = payload.get("gate_cmd") or ""
 box.gate_timeout = float(payload.get("gate_timeout") or 120.0)
 box.runner = None
 box.roots = [Path(p) for p in payload.get("roots") or []]
+box.skill_roots = [Path(p) for p in payload.get("skill_roots") or []]
 box._specs = []
+box.loaded = set()   # __new__ 绕过了 __init__，必须自己初始化
 
 out_lines = []
 def emit(*items):
@@ -112,6 +114,9 @@ def measure(text):
 def run_gate(text, gate=""):
     return _call("run_gate", {"text": text, "gate": gate})
 
+def load_skill(name, section=""):
+    return _call("load_skill", {"name": name, "section": section})
+
 SAFE = {"abs": abs, "all": all, "any": any, "bool": bool, "dict": dict, "enumerate": enumerate,
         "filter": filter, "float": float, "int": int, "isinstance": isinstance, "len": len,
         "list": list, "map": map, "max": max, "min": min, "print": emit, "range": range,
@@ -121,7 +126,7 @@ SAFE = {"abs": abs, "all": all, "any": any, "bool": bool, "dict": dict, "enumera
         "IndexError": IndexError, "ZeroDivisionError": ZeroDivisionError}
 
 ns = {"__builtins__": SAFE, "read_prev": read_prev, "lookup_bible": lookup_bible,
-      "measure": measure, "run_gate": run_gate}
+      "measure": measure, "run_gate": run_gate, "load_skill": load_skill}
 error = ""
 try:
     exec(compile(payload["code"], "<ptc>", "exec"), ns)
@@ -132,7 +137,8 @@ except BaseException as exc:
 text = "\n".join(out_lines)
 if len(text) > 20000:
     text = text[:20000] + "\n…（输出过长，已截断）"
-print(json.dumps({"stdout": text, "error": error}, ensure_ascii=False))
+print(json.dumps({"stdout": text, "error": error,
+                  "skills": sorted(getattr(box, "loaded", ()) or ())}, ensure_ascii=False))
 """
 
 
@@ -144,6 +150,8 @@ class ProgramResult:
     stdout: str = ""
     error: str = ""
     elapsed: float = 0.0
+    #: 程序里成功载入过的规范名（load_skill 真读到正文才记账），用于技能闸门
+    skills: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -151,7 +159,8 @@ class ProgramResult:
 
     def as_dict(self) -> dict:
         return {"code": self.code[:600], "stdout": self.stdout[:2000],
-                "error": self.error, "elapsed": round(self.elapsed, 2)}
+                "error": self.error, "elapsed": round(self.elapsed, 2),
+                "skills": list(self.skills)}
 
 
 def run_program(code: str, box, *, timeout: float = 60.0, python: str | None = None) -> ProgramResult:
@@ -164,7 +173,8 @@ def run_program(code: str, box, *, timeout: float = 60.0, python: str | None = N
     payload = {"code": body,
                "roots": [str(p) for p in getattr(box, "roots", []) or []],
                "gate_cmd": getattr(box, "gate_cmd", "") or "",
-               "gate_timeout": getattr(box, "gate_timeout", 120.0)}
+               "gate_timeout": getattr(box, "gate_timeout", 120.0),
+               "skill_roots": [str(p) for p in getattr(box, "skill_roots", []) or []]}
     env = dict(os.environ)
     src_root = str(Path(__file__).resolve().parent.parent)
     env["PYTHONPATH"] = src_root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
@@ -190,8 +200,13 @@ def run_program(code: str, box, *, timeout: float = 60.0, python: str | None = N
         except Exception:
             tail = (proc.stderr or "").strip()[-600:] or "子进程没有返回结果"
             return ProgramResult(code=body, stdout=raw[-2000:], error=tail, elapsed=elapsed)
+        skills = [str(s) for s in (data.get("skills") or [])]
+        loaded = getattr(box, "loaded", None)
+        if skills and isinstance(loaded, set):
+            loaded.update(skills)   # 技能闸门在父进程查 toolbox.loaded
         return ProgramResult(code=body, stdout=str(data.get("stdout") or ""),
-                             error=str(data.get("error") or ""), elapsed=elapsed)
+                             error=str(data.get("error") or ""), elapsed=elapsed,
+                             skills=skills)
 
 
 PTC_SYSTEM = "\n".join([
@@ -202,6 +217,7 @@ PTC_SYSTEM = "\n".join([
     "  lookup_bible(query, top=3) -> dict   在设定库里按关键词找条目；keys: hits[(source, text)]",
     "  measure(text) -> dict                文体指标；keys: chars, sentences, avg_sentence, cv, comma_per_100, short_ratio",
     "  run_gate(text, gate=\"\") -> dict      文风闸门；keys: status, verdict, findings",
+    "  load_skill(name, section=\"\") -> dict  读写作规范；keys: name, chars, text",
     "用 print() 输出你要看的东西；程序跑完把输出回给你。",
     "规则：",
     "1) 只输出一段 " + _FENCE + "python 代码块，或一句结论；",

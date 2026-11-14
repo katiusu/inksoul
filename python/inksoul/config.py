@@ -95,7 +95,9 @@ class AgentConfig:
     #: 外部门禁命令；{file} 会被替换成正文临时文件路径
     gate_cmd: str = ""
     gate_timeout: float = 300.0
-    story: str = "auto"   # auto/long/short/off：本地 story skill 注入
+    story: str = "auto"   # auto/long/short/off：指定要求载入哪支 story 规范
+    #: 预设要求载入的写作规范 skill 名（空 = 不要求）；draft/cover 默认空
+    skills: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -110,30 +112,40 @@ class AgentPreset:
     deliver: str = ""            # ""/publish/cover
     require_from: bool = False   # 续写档必须给 --from
     gate: str = ""               # ""/deslop/full/essay/zhuque：文风闸门
+    #: 预设内联的写作规范 skill 名（如 prose-deai）；空元组 = 不注入
+    skills: tuple[str, ...] = ()
     desc: str = ""
 
+
+#: 每个预设档要求 agent 自己用 load_skill 载入的规范（不再预先摘录进 system）。
+#: story 主干（long-write/short-write/review）由 story.py 按模式追加。
+#: story-deslop 不并进来：去 AI 味只走 prose-deai + 闸门，避免两套规则打架。
+STYLE_SKILLS: tuple[str, ...] = ("prose-deai",)
+#: 直出档不要求载入任何规范：它是对照基线，也是「先看裸生成水平」的入口
+DRAFT_SKILLS: tuple[str, ...] = ()
 
 #: agent 预设档；CLI 用 --preset 选，显式参数永远优先于预设
 AGENT_PRESETS: dict[str, AgentPreset] = {
     "draft": AgentPreset("draft", story="auto", candidates=1, max_rounds=0,
-                         desc="直出：单候选、不修订，最快最省"),
+                         skills=DRAFT_SKILLS,
+                         desc="直出：单候选、不修订，不要求载入规范，最快最省"),
     "long": AgentPreset("long", story="long", candidates=3, max_rounds=3, target_chars=3000,
-                        gate="deslop",
+                        gate="deslop", skills=STYLE_SKILLS,
                         desc="长篇单章：长篇规范 + 3 候选 + 最多 3 轮修订 + 定稿过闸门"),
     "short": AgentPreset("short", story="short", candidates=2, max_rounds=2, target_chars=1500,
-                         gate="deslop",
+                         gate="deslop", skills=STYLE_SKILLS,
                          desc="短篇：短篇规范，篇幅与轮次都更小，定稿过闸门"),
     "rewrite": AgentPreset("rewrite", story="long", candidates=2, max_rounds=2,
-                           require_from=True,
+                           require_from=True, skills=STYLE_SKILLS,
                            desc="续写：必须给 --from 前文（story-import 口径）"),
     "publish": AgentPreset("publish", story="long", candidates=2, max_rounds=2, deliver="publish",
-                           gate="deslop",
+                           gate="deslop", skills=STYLE_SKILLS,
                            desc="成稿 + 发布资料（story-publish），定稿过闸门"),
     "cover": AgentPreset("cover", story="auto", candidates=1, max_rounds=0, deliver="cover",
                          desc="直出 + 封面提示词（story-cover）"),
     "deai": AgentPreset("deai", story="auto", candidates=2, max_rounds=3, target_chars=2000,
-                        gate="deslop",
-                        desc="去 AI 味一条龙：写作规范注入 + 闸门复核 + 按命中条目改进"),
+                        gate="deslop", skills=STYLE_SKILLS,
+                        desc="去 AI 味一条龙：要求载入规范 + 闸门复核 + 按命中条目改进"),
 }
 
 
@@ -173,7 +185,8 @@ def resolve_gate(name: str) -> str:
 
 def merge_preset(preset: AgentPreset | None, *, story: str = "", candidates: int | None = None,
                  rounds: int | None = None, target_chars: int = 0,
-                 deliver: str = "", gate: str = "") -> dict[str, Any]:
+                 deliver: str = "", gate: str = "",
+                 skills: list[str] | None = None) -> dict[str, Any]:
     """显式参数 > 预设 > 配置默认；返回可直接喂给 WritingAgent 的一组值。"""
     return {
         "story": story or (preset.story if preset else ""),
@@ -182,6 +195,8 @@ def merge_preset(preset: AgentPreset | None, *, story: str = "", candidates: int
         "target_chars": target_chars or (preset.target_chars if preset else 0),
         "deliver": deliver or (preset.deliver if preset else ""),
         "gate": gate or (preset.gate if preset else ""),
+        "skills": list(skills if skills is not None
+                       else (preset.skills if preset else ())),
     }
 
 

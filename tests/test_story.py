@@ -9,7 +9,7 @@ from inksoul.config import InkSoulConfig, ModelConfig
 from inksoul.errors import ConfigError
 from inksoul.generation import CreationBrief
 from inksoul.llm import LLMClient
-from inksoul.story import EXCLUDED, MAX_CHARS, StoryPack, discover
+from inksoul.story import EXCLUDED, StoryPack, discover, load_skill_block
 
 
 def _write_skill(root: Path, name: str, version: str, body: str) -> Path:
@@ -21,8 +21,10 @@ def _write_skill(root: Path, name: str, version: str, body: str) -> Path:
     return d
 
 
-LONG_BODY = "## 写前必读\n必须先生成章纲，再写正文。\n\n## 结构\n黄金三章要给出主角处境。\n"
-SHORT_BODY = "## 写前必读\n开篇两百字内出冲突。\n\n## 情绪\n情绪靠动作推。\n"
+LONG_BODY = ("## 写前必读\n必须先生成章纲，再写正文。\n\n## 核心方法\n先定本章主导情绪，\n"
+             "再排场景。\n\n## 结构\n黄金三章要给出主角处境。\n")
+SHORT_BODY = ("## 写前必读\n开篇两百字内出冲突。\n\n## 核心方法\n按题材选写法。\n\n"
+              "## 情绪\n情绪靠动作推。\n")
 REVIEW_BODY = "## 审查维度\n- 因果\n- 节奏\n- 人物一致性\n"
 
 
@@ -66,46 +68,45 @@ class StoryPackTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _pack(self, mode="auto", target_chars=0, max_chars=MAX_CHARS):
-        return StoryPack(mode=mode, target_chars=target_chars, roots=[str(self.root)],
-                         max_chars=max_chars)
+    def _pack(self, mode="auto", target_chars=0):
+        return StoryPack(mode=mode, target_chars=target_chars, roots=[str(self.root)])
 
-    def test_off_mode_does_not_inject(self):
+    def test_off_mode_does_not_require(self):
         pack = self._pack("off")
         self.assertEqual(pack.prompt_block(), "")
-        self.assertEqual(pack.review_block(), "")
-        self.assertIn("关闭", "".join(pack.notes))
+        self.assertIn("不要求载入", "".join(pack.notes))
 
-    def test_long_mode_injects_guard_and_content(self):
+    def test_long_mode_only_asks_to_load_skill(self):
         pack = self._pack("long")
         block = pack.prompt_block()
-        self.assertIn("只采纳其中关于写法", block)
+        self.assertIn("load_skill", block)
         self.assertIn("story-long-write", block)
-        self.assertIn("必须先生成章纲", block)
+        self.assertIn("只采纳关于写法", block)
+        # 规范正文不再内联：整句要求不到 300 字，正文里的字一句都不该出现
+        self.assertLess(len(block), 300)
+        self.assertNotIn("黄金三章", block)
+        self.assertNotIn("必须先生成章纲", block)
         self.assertIn("1.2.3", "".join(pack.notes))
 
     def test_auto_picks_short_for_small_target(self):
         self.assertEqual(self._pack("auto", target_chars=2000).write_skill, "story-short-write")
         self.assertEqual(self._pack("auto", target_chars=20000).write_skill, "story-long-write")
 
-    def test_excerpt_respects_budget(self):
-        pack = self._pack("long", max_chars=30)
-        block = pack.prompt_block()
-        self.assertLess(len(block), 200)
-
-    def test_review_block_uses_review_skill(self):
-        block = self._pack("long").review_block()
+    def test_load_skill_block_lists_names(self):
+        block = load_skill_block(["prose-deai", "story-review"])
+        self.assertIn("prose-deai", block)
         self.assertIn("story-review", block)
-        self.assertIn("因果", block)
+        self.assertEqual(load_skill_block([]), "")
+        self.assertEqual(load_skill_block([" ", ""]), "")
 
     def test_manifest_marks_selected(self):
         rows = {r["name"]: r for r in self._pack("short").manifest()}
         self.assertTrue(rows["story-short-write"]["selected"])
         self.assertFalse(rows["story-long-write"]["selected"])
         self.assertFalse(rows["story-cover"]["present"])
-        self.assertIn("不注入", rows["story-setup"]["role"])
+        self.assertIn("不载入", rows["story-setup"]["role"])
 
-    def test_missing_skills_no_injection(self):
+    def test_missing_skills_no_requirement(self):
         pack = StoryPack(mode="long", roots=[str(self.root / "nope")])
         self.assertEqual(pack.prompt_block(), "")
         self.assertIn("未找到", "".join(pack.notes))
@@ -201,7 +202,7 @@ class DeliverTest(unittest.TestCase):
             seen = []
             cfg = InkSoulConfig()
             cfg.model.api_key = "sk-t"
-            res = WritingAgent(cfg, client=self._client(seen), gate_cmd="").run(
+            res = WritingAgent(cfg, client=self._client(seen), gate_cmd="", require_skills=False).run(
                 "雨夜重逢", candidates=1, max_rounds=0,
                 from_path=prev, refs=[str(ref)])
             joined = " ".join(seen)
@@ -218,7 +219,7 @@ class DeliverTest(unittest.TestCase):
                 seen = []
                 cfg = InkSoulConfig()
                 cfg.model.api_key = "sk-t"
-                res = WritingAgent(cfg, client=self._client(seen), gate_cmd="").run(
+                res = WritingAgent(cfg, client=self._client(seen), gate_cmd="", require_skills=False).run(
                     "雨夜重逢", candidates=1, max_rounds=0, deliver_kind="publish")
                 self.assertIn("publish", res.deliverables)
                 self.assertIn("publish", res.as_dict()["deliverables"])
@@ -227,3 +228,41 @@ class DeliverTest(unittest.TestCase):
                     os.environ.pop("INKSOUL_STORY_SKILLS", None)
                 else:
                     os.environ["INKSOUL_STORY_SKILLS"] = old
+
+
+class AgentLoadRequirementTest(unittest.TestCase):
+    """预设不再内联规范：只要求载入，并自动开工具面让这句要求可执行。"""
+
+    def test_agent_requires_load_skill_and_enables_tools(self):
+        with tempfile.TemporaryDirectory() as td:
+            _write_skill(Path(td), "story-long-write", "1.0.0", LONG_BODY)
+            old = os.environ.get("INKSOUL_STORY_SKILLS")
+            os.environ["INKSOUL_STORY_SKILLS"] = td
+            seen = []
+
+            def transport(method, url, headers, body, timeout):
+                payload = json.loads(body.decode() if isinstance(body, bytes) else body)
+                seen.append(" ".join(str(m.get("content", "")) for m in payload["messages"]))
+                content = PLAN if "文体策略" in seen[-1] else DRAFT
+                return 200, json.dumps({"choices": [{"message": {"content": content}}]},
+                                       ensure_ascii=False)
+
+            try:
+                cfg = InkSoulConfig()
+                cfg.model.api_key = "sk-t"
+                client = LLMClient(ModelConfig(base_url="http://x/v1", api_key="sk-t", model="m"),
+                                   transport=transport, sleep=lambda s: None)
+                agent = WritingAgent(cfg, client=client, gate_cmd="", story="long", require_skills=False)
+                res = agent.run("雨夜重逢", candidates=1, max_rounds=0)
+            finally:
+                if old is None:
+                    os.environ.pop("INKSOUL_STORY_SKILLS", None)
+                else:
+                    os.environ["INKSOUL_STORY_SKILLS"] = old
+
+        joined = "\n".join(seen)
+        self.assertIn("load_skill 依次读", joined)
+        self.assertIn("story-long-write", joined)
+        self.assertNotIn("黄金三章要给出主角处境", joined)   # 规范正文不再内联
+        self.assertIsNotNone(agent.toolbox)
+        self.assertTrue(any("load_skill" in n for n in res.notes))

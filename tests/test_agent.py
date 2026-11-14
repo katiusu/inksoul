@@ -6,7 +6,7 @@ from pathlib import Path
 from inksoul.agent import (RoundRecord, STATUS_FAIL, STATUS_PASS, STATUS_SKIPPED,
                            WritingAgent, run_gate)
 from inksoul.config import InkSoulConfig, ModelConfig
-from inksoul.errors import ConfigError
+from inksoul.errors import ConfigError, InkSoulError
 from inksoul.llm import LLMClient
 
 DRAFT = ("他把门推开。\n\n她把窗关上。\n\n猫把桌上的杯子碰倒。\n\n"
@@ -87,7 +87,7 @@ class TestAgent(unittest.TestCase):
     def test_requires_api(self):
         cfg = InkSoulConfig()
         with self.assertRaises(ConfigError):
-            WritingAgent(cfg).run("x", offline=True)
+            WritingAgent(cfg, require_skills=False).run("x", offline=True)
 
     def test_run_writes_output_and_report(self):
         cfg = InkSoulConfig()
@@ -95,7 +95,7 @@ class TestAgent(unittest.TestCase):
         with __import__("tempfile").TemporaryDirectory() as td:
             out = Path(td) / "draft.txt"
             rep = Path(td) / "report.json"
-            res = WritingAgent(cfg, client=fake_client(), gate_cmd="",
+            res = WritingAgent(cfg, client=fake_client(), gate_cmd="", require_skills=False,
                                gate_timeout=1).run(
                 "雨夜重逢", candidates=1, max_rounds=1, out=out, report_path=rep)
             self.assertTrue(out.exists())
@@ -109,7 +109,7 @@ class TestAgent(unittest.TestCase):
     def test_gate_failure_recorded(self):
         cfg = InkSoulConfig()
         cfg.model.api_key = "sk-t"
-        res = WritingAgent(cfg, client=fake_client(), gate_cmd="bash g.sh {file}",
+        res = WritingAgent(cfg, client=fake_client(), gate_cmd="bash g.sh {file}", require_skills=False,
                            gate_timeout=1,
                            runner=lambda line, t: (1, "VERDICT: FAIL")).run(
             "雨夜重逢", candidates=1, max_rounds=0)
@@ -120,7 +120,7 @@ class TestAgent(unittest.TestCase):
     def test_gate_pass_is_not_blocking(self):
         cfg = InkSoulConfig()
         cfg.model.api_key = "sk-t"
-        res = WritingAgent(cfg, client=fake_client(), gate_cmd="bash g.sh {file}",
+        res = WritingAgent(cfg, client=fake_client(), gate_cmd="bash g.sh {file}", require_skills=False,
                            gate_timeout=1,
                            runner=lambda line, t: (0, "VERDICT: PASS\nRECEIPT: d.txt rc=0")).run(
             "雨夜重逢", candidates=1, max_rounds=1)
@@ -141,7 +141,7 @@ class TestGateFinalOnly(unittest.TestCase):
             calls.append(line)
             return 0, "VERDICT: PASS"
 
-        res = WritingAgent(self._cfg(), client=fake_client(), gate_cmd="bash g.sh {file}",
+        res = WritingAgent(self._cfg(), client=fake_client(), gate_cmd="bash g.sh {file}", require_skills=False,
                            gate_timeout=1, runner=runner).run(
             "雨夜重逢", candidates=3, max_rounds=0)
         self.assertEqual(len(calls), 1)
@@ -157,7 +157,7 @@ class TestGateFinalOnly(unittest.TestCase):
                 return 1, "prose_dense FAIL 句末单字 0 处\nVERDICT: FAIL"
             return 0, "VERDICT: PASS"
 
-        res = WritingAgent(self._cfg(), client=fake_client(), gate_cmd="bash g.sh {file}",
+        res = WritingAgent(self._cfg(), client=fake_client(), gate_cmd="bash g.sh {file}", require_skills=False,
                            gate_timeout=1, runner=runner).run(
             "雨夜重逢", candidates=2, max_rounds=0)
         self.assertEqual(len(seq), 2)
@@ -171,7 +171,7 @@ class TestGateFinalOnly(unittest.TestCase):
             calls.append(line)
             return 0, "VERDICT: PASS"
 
-        agent = WritingAgent(self._cfg(), client=fake_client(),
+        agent = WritingAgent(self._cfg(), client=fake_client(), require_skills=False,
                              gate_cmd="bash g.sh {file}", gate_timeout=1,
                              runner=runner)
         _, _, g1 = agent._grade(DRAFT, label="候选#0", with_gate=False)
@@ -181,3 +181,33 @@ class TestGateFinalOnly(unittest.TestCase):
         self.assertEqual(g2.status, STATUS_PASS)
         self.assertEqual(len(calls), 1)
 
+
+
+class SkillGateTest(unittest.TestCase):
+    """规范载入是前置条件：没留下 load_skill 记录就不许生成。"""
+
+    def _agent(self, **kw):
+        cfg = InkSoulConfig()
+        cfg.model.api_key = "sk-t"
+        return WritingAgent(cfg, client=fake_client(), **kw)
+
+    def test_missing_load_skill_raises(self):
+        with self.assertRaises(InkSoulError) as ctx:
+            self._agent()._check_skills_loaded(
+                ["prose-deai"], [{"tool": "read_file", "args": {"path": "x"}}])
+        msg = str(ctx.exception)
+        self.assertIn("prose-deai", msg)
+        self.assertIn("load_skill", msg)
+
+    def test_nothing_called_raises(self):
+        with self.assertRaises(InkSoulError):
+            self._agent()._check_skills_loaded(["prose-deai"], [])
+
+    def test_loaded_skill_passes(self):
+        self._agent()._check_skills_loaded(
+            ["prose-deai"],
+            [{"tool": "load_skill", "args": {"name": "prose-deai"}}])
+
+    def test_off_switches_off(self):
+        agent = self._agent(require_skills=False)
+        agent._check_skills_loaded(["prose-deai"], [])

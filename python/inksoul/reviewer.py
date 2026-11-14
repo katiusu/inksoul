@@ -26,6 +26,14 @@ NEAR_DUP_SIM = 0.90
 OPENING_MIN_RUN = 3
 #: 对话标签同质：占比 ≥ 该值且总数 ≥ 3
 SPEECH_VERB_SHARE = 0.6
+#: 对白占比下界：八篇人工样本 p10 = 0.11（02 公交 0.11 / 05 群交 0.15 / 08 妹妹 0.15 /
+#: 04 竞技 0.21 / 01 憋尿 0.27 / 06 直播 0.30 / 07 触手 0.36；03 尤娜日记 0.03 是日记体，不参与定界）
+DIALOGUE_MIN_RATIO = 0.11
+
+#: 顿号密度阈值（每千汉字）。八篇人工样本实测 0.00–4.32，8 篇里 4 篇为 0；
+#: 中位 0.62。超过 p90 告警、超过 8 判阻断（AI 那种「灯光、声音、气味、温度」轻松到 8–15）。
+DUNHAO_WARN = 4.32
+DUNHAO_BLOCK = 8.0
 #: 情绪直陈的触发词
 EMOTION_CUES = ("感到", "觉得", "心里", "心中", "一阵", "涌起", "袭来")
 #: 情绪词（粗表，只用于定位，不用于判定）
@@ -38,6 +46,8 @@ KIND_OPENING = "句首重复"
 KIND_DIALOGUE = "对话标签同质"
 KIND_EMOTION = "情绪直陈"
 KIND_MARKER = "AI 味标记"
+KIND_DIALOGUE_LOW = "叙述替代对白"
+KIND_DUNHAO = "顿号滥用"
 
 
 @dataclass
@@ -98,6 +108,22 @@ def _clause_texts(doc: Document) -> dict[str, tuple]:
             for cl in sent.clauses:
                 out[cl.id] = (cl.text, para.id, sent.id)
     return out
+
+
+def _sample_clause(doc: Document, pred, limit: int = 80) -> str:
+    """从原文里挑一句满足 pred 的分句做定位样本。
+
+    阻断项必须能落回正文：把指标串（「15.92 个/千字」）当 text 塞进 issue，
+    generation._locate() 在正文里找不到它，修订器连模型都不会调用就跳过了。
+    """
+    best = ""
+    for cl in (getattr(doc, "clauses", None) or []):
+        s = (getattr(cl, "text", "") or "").strip()
+        if len(s) < 6 or not pred(s):
+            continue
+        if len(s) > len(best):
+            best = s
+    return best[:limit]
 
 
 def review(doc: Document, *, fingerprint_report: fp.FingerprintReport | None = None,
@@ -197,9 +223,61 @@ def review(doc: Document, *, fingerprint_report: fp.FingerprintReport | None = N
         if hit_cue and hit_word:
             issues.append(LiteraryIssue(
                 kind=KIND_EMOTION, clause_id=cl.id, text=cl.text, severity=0.3,
-                suggestion="情绪被直接命名：换成动作、生理反应或环境侧写，让读者自己读出来",
+                suggestion="情绪被直接命名：换成人物的动作、身体反应或他说出口的话；不要交给景物承担",
                 evidence={"cue": hit_cue, "emotion_word": hit_word,
                           "confidence": "低（词表启发式，未标定）"},
+            ))
+
+    # 5b) 叙述替代对白：对白占比低于人工样本下界
+    #     正文短于 400 字时比值不稳定（一句台词就能把 0 拉到 0.3），不判。
+    if narrative is not None and len(getattr(doc, "text", "") or "") >= 400:
+        ratio = float(getattr(narrative, "dialogue_ratio", 0.0) or 0.0)
+        if ratio < DIALOGUE_MIN_RATIO:
+            issues.append(LiteraryIssue(
+                kind=KIND_DIALOGUE_LOW, clause_id="",
+                text=_sample_clause(
+                    doc, lambda s: ("「" not in s and "“" not in s and "\"" not in s
+                                    and "、" not in s)
+                ) or f"对白占比 {ratio:.2f}",
+                severity=0.65 if ratio < DIALOGUE_MIN_RATIO * 0.55 else 0.5,
+                suggestion="该由人物当场说出的话被叙述转述了：把交代、请求、拒绝、抱怨改成引号内的台词，"
+                           "用称呼和口头禅区分说话人，不要用「他说」「她道」承接",
+                evidence={"ratio": round(ratio, 3), "min": DIALOGUE_MIN_RATIO,
+                          "source": "八篇人工样本 p10（日记体不计）"},
+            ))
+
+
+    # 5c) 顿号滥用：密度看整体，句数抓清单式罗列
+    #     阈值来自八篇人工样本（每千汉字 0.00–4.32，8 篇里 4 篇为 0）
+    if narrative is not None and len(getattr(doc, "text", "") or "") >= 400:
+        per = float(getattr(narrative, "dunhao_per_kchar", 0.0) or 0.0)
+        clusters = int(getattr(narrative, "dunhao_clause_count", 0) or 0)
+        max_dunhao = 0
+        for cl in clauses:
+            n_dun = (getattr(cl, "text", "") or "").count("、")
+            if n_dun > max_dunhao:
+                max_dunhao = n_dun
+        sev = 0.0
+        why = ""
+        if per > DUNHAO_BLOCK:
+            sev, why = 0.65, "%.2f 个/千字（样本 p90 为 4.32）" % per
+        elif max_dunhao >= 4:
+            sev, why = 0.65, "一句里 %d 个顿号" % max_dunhao
+        elif per > DUNHAO_WARN:
+            sev, why = 0.5, "%.2f 个/千字（样本 p90 为 4.32）" % per
+        elif max_dunhao >= 3 or clusters >= 3:
+            sev, why = 0.5, "单句 %d 个顿号，%d 句用了 ≥3 个" % (max_dunhao, clusters)
+        if sev:
+            issues.append(LiteraryIssue(
+                kind=KIND_DUNHAO, clause_id="",
+                text=_sample_clause(doc, lambda s: s.count("、") >= 2) or why,
+                severity=sev,
+                suggestion="顿号串成清单了：把并列的东西拆成短句或换段，一句里最多两个顿号；"
+                           "动作和反应之间不要用顿号连",
+                evidence={"per_kchar": round(per, 2), "clauses": clusters,
+                          "max_per_clause": max_dunhao,
+                          "warn": DUNHAO_WARN, "block": DUNHAO_BLOCK,
+                          "source": "八篇人工样本（4/8 篇为 0，p90 = 4.32）"},
             ))
 
     # 6) AI 味标记族：把密度放到人类网文分位数上看位置（不是 AI 概率）

@@ -20,7 +20,7 @@ import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .story import StoryPack
+from .story import REVIEW_SKILL, StoryPack, load_skill_block
 from .config import InkSoulConfig
 from .errors import ConfigError, InkSoulError
 from .generation import (CreationBrief, Draft, StylePlan, build_plan, generate, restyle,
@@ -218,7 +218,7 @@ DELIVER_SKILLS = {"publish": "story-publish", "cover": "story-cover"}
 
 
 def build_deliverable(kind: str, pack: StoryPack, brief: CreationBrief, client,
-                      *, max_chars: int = 1800) -> str:
+                      *, toolbox=None, max_chars: int = 4000) -> str:
     """按 story-publish / story-cover 的口径，额外生成发布资料或封面提示词。"""
     name = DELIVER_SKILLS.get(kind)
     if not name:
@@ -226,7 +226,19 @@ def build_deliverable(kind: str, pack: StoryPack, brief: CreationBrief, client,
     skill = pack.skills.get(name)
     if not skill:
         raise ConfigError("本地缺少 %s skill" % name, hint="跑 inksoul skills 确认安装")
-    prompt = "%s\n\n【题材与要求】\n%s" % (skill.excerpt(max_chars), brief.prompt_block())
+    # 规范正文优先走 load_skill（与写作链路同一份来源）；工具面不可用时才直读文件，
+    # 两条路都取整篇，不再做「挑节 + 截断」的摘录。
+    norm = ""
+    if toolbox is not None:
+        raw = toolbox.dispatch("load_skill", {"name": name, "limit": max_chars})
+        try:
+            got = json.loads(raw)
+        except ValueError:
+            got = {}
+        norm = str(got.get("text", "") or "") if isinstance(got, dict) else ""
+    if not norm:
+        norm = skill.body.strip()[:max_chars]
+    prompt = "【%s 规范】\n%s\n\n【题材与要求】\n%s" % (name, norm, brief.prompt_block())
     resp = client.chat(
         [{"role": "system", "content": "你按给定的写作说明产出可直接使用的交付物，只输出正文。"},
          {"role": "user", "content": prompt}], temperature=0.4, max_tokens=800)
@@ -239,7 +251,8 @@ class WritingAgent:
     def __init__(self, config: InkSoulConfig, *, client: LLMClient | None = None,
                  gate_cmd: str = "", gate_timeout: float | None = None, runner=None,
                  story: str = "", tools: bool = False, tool_steps: int = 0,
-                 tool_mode: str = "", gate_final_only: bool = True):
+                 tool_mode: str = "", gate_final_only: bool = True,
+                 skills: list[str] | None = None, require_skills: bool = True):
         self.config = config
         if client is None and config.model.api_key:
             client = LLMClient(config.model)
@@ -252,6 +265,10 @@ class WritingAgent:
         # 闸门是 40s 级外部进程：默认只在定稿后跑，不逐候选、不逐轮跑
         self.gate_final_only = bool(gate_final_only)
         self.story_mode = story or getattr(agent_cfg, "story", "auto")
+        raw = skills if skills is not None else (getattr(agent_cfg, "skills", None) or [])
+        self.skill_names = [str(s).strip() for s in raw if str(s).strip()]
+        # 规范载入是前置条件还是仅仅「要求」：真跑时用前置条件，离线自测可关
+        self.require_skills = bool(require_skills)
         # 工具面：默认关闭（零额外请求）；standard=function calling，ptc=程序化工具调用
         mode = str(tool_mode or "").strip().lower()
         if mode not in ("", "standard", "ptc"):
@@ -318,8 +335,40 @@ class WritingAgent:
             passes += 1
         return text, gate, passes
 
+    def _check_skills_loaded(self, required: list[str], tool_steps: list[dict]) -> None:
+        """要求载入的规范必须真的载入过，缺一个就不许生成。
+
+        只认侦察阶段的工具调用记录：模型在笔记里自称「已读完」不算，prompt 里的「要求」
+        也约束不了它自己。require_skills=False 只留给离线自测，不开这个口子就测不了假模型。
+        """
+        if not required or not self.require_skills:
+            return
+        # 优先查 ToolBox 的已载入集合：只有真读到正文才记账，调用失败（没找到 / 名字不合法）
+        # 不算数。没有工具面时退回侦察阶段的调用记录（PTC 模式下是程序源码）。
+        loaded = getattr(self.toolbox, "loaded", None) if self.toolbox is not None else None
+        if loaded is not None:
+            missing = [n for n in required
+                       if not any(n == x or n.startswith(x + "-") or x.startswith(n + "-")
+                                  for x in loaded)]
+            hit = bool(loaded)
+        else:
+            blob = " ".join(str(s) for s in (tool_steps or []))
+            missing = [n for n in required if n not in blob]
+            hit = "load_skill" in blob
+        if not hit or missing:
+            raise InkSoulError(
+                "生成前必须先载入写作规范，缺 %s" % (
+                    "、".join(missing) if missing else "（侦察阶段没有 load_skill 调用）"),
+                hint="先 load_skill 读 %s 再重跑；侦察阶段必须留下调用记录"
+                     % "、".join(required),
+                detail={"required": list(required), "missing": missing,
+                        "loaded": sorted(loaded or []),
+                        "tool_steps": len(tool_steps or [])},
+            )
+
     # ---------------------------------------------------------------- 主流程
-    def run(self, theme: str, *, genre: str = "小说", perspective: str = "",
+    def run(self, theme: str, *, genre: str = "小说", register: str = "文学书面",
+            perspective: str = "",
             target_chars: int = 0, candidates: int | None = None,
             max_rounds: int | None = None, out: str | Path | None = None,
             report_path: str | Path | None = None, offline: bool = False,
@@ -328,7 +377,8 @@ class WritingAgent:
         agent_cfg = getattr(self.config, "agent", None)
         if target_chars:
             self.config.generation.target_chars = int(target_chars)
-        brief = CreationBrief(theme=theme, genre=genre or "小说", perspective=perspective,
+        brief = CreationBrief(theme=theme, genre=genre or "小说", register=register,
+                              perspective=perspective,
                               target_chars=self.config.generation.target_chars)
         plan = build_plan(brief, self.config, client=self.client, use_llm=not offline)
         if offline or self.client is None or not self.client.available:
@@ -358,15 +408,34 @@ class WritingAgent:
                 extra_bits.append("【参考资料读取失败：%s】" % p.name)
         extra_user = "\n\n".join(extra_bits)
 
+        # 规范不再摘录进 system：只要求模型用 load_skill 自己载入。检索/阅读的成本由侦察
+        # 阶段一次性付掉，写作与修订的请求里只留一百来字的「去载入」要求。
         pack = StoryPack(mode=self.story_mode, target_chars=self.config.generation.target_chars)
-        story_prompt = pack.prompt_block()
-        story_review = pack.review_block()
+        write_names = ([pack.write_skill] if pack.write_skill else []) + list(self.skill_names)
+        review_names = list(self.skill_names)
+        if pack.skills.get(REVIEW_SKILL):
+            review_names = [REVIEW_SKILL] + review_names
+        story_prompt = load_skill_block(write_names)
+        story_review = load_skill_block(review_names or write_names)
+        required = [n for n in write_names if n]
+        if required and self.toolbox is None:
+            # 要求载入就必须给载入手段：工具面没开时按最小档打开
+            self.tool_mode = self.tool_mode or "standard"
+            self.tool_steps = max(2, self.tool_steps)
+            self.toolbox = ToolBox(self.config, gate_cmd=self.gate_cmd,
+                                   gate_timeout=self.gate_timeout, runner=self.runner)
 
         # 0) 侦察：开启工具面时先让模型查资料（PTC 程序化调用 / 标准 function calling）
         tool_steps: list[dict] = []
         if self.toolbox is not None:
+            recon_sys = PTC_SYSTEM if self.tool_mode == "ptc" else RECON_SYSTEM
+            if required:
+                recon_sys += (chr(10) + chr(10) + "动笔前先用 load_skill 依次读："
+                              + "、".join(required)
+                              + "。把它们当中必须遵守的写法规则压进 ≤400 字的侦察笔记"
+                                "（结构、节奏、视角、对白、禁用句式），后面写作直接照它写。")
             recon_msgs = [
-                {"role": "system", "content": PTC_SYSTEM if self.tool_mode == "ptc" else RECON_SYSTEM},
+                {"role": "system", "content": recon_sys},
                 {"role": "user", "content": "【题材与要求】" + chr(10) + brief.prompt_block()},
             ]
             if self.tool_mode == "ptc":
@@ -383,7 +452,12 @@ class WritingAgent:
                 note = "【侦察笔记（工具调用所得，供写作参考）】" + chr(10) + tail[:1500]
                 extra_user = (extra_user + chr(10) + chr(10) + note) if extra_user else note
 
-        # 1) 多候选：按 rank 择优（闸门 → 阻断 → 问题总数）
+        # 0.5) 前置条件：要求载入的规范必须真的载入过。只认侦察阶段的工具调用记录，
+        #      不看模型在笔记里自称读完——prompt 里的「要求」约束不了 agent 自己。
+        self._check_skills_loaded(required, tool_steps)
+
+        # 1) 【Phase A · 全量初稿】一次出完所有候选，期间不做任何修订——
+        #    边写边改会让后段被前段的判据带偏，整篇风格漂移。修订一律留到 Phase B。
         pool: list[tuple[RoundRecord, str, object, GateResult]] = []
         for i in range(n):
             draft: Draft = generate(brief, plan, self.client, candidate_id=i,
@@ -396,13 +470,16 @@ class WritingAgent:
         best_rec, best_text, best_report, best_gate = min(pool, key=lambda p: p[0].rank())
         history: list[RoundRecord] = [r for r, _, _, _ in pool]
 
-        # 2) 复核 → 改进 → 回滚（多轮收敛：直到闸门 PASS / 无问题 / 预算或轮数用完）
+        # 2) 【Phase B · 分段修订】对照判据逐段改；每次修订都记「改前 rank → 改后 rank」，
+        #    否则看不出这一轮是真变好，还是只是变了。
+        phase_b_revisions = 0
         stop = "达到轮次上限（%d）" % limit
         started = time.monotonic()
         stall = 0
         # 内置闸门是纯 Python，便宜，可以每轮都跑；外部闸门 40s 级，仍留到定稿
         cheap_gate = self.gate_cmd.strip().startswith("__inksoul__:")
         for rnd in range(1, limit + 1):
+            before_rank = best_rec.rank()
             passed = (best_gate.status.upper() == STATUS_PASS.upper()
                       and not best_report.review.issues)
             if passed:
@@ -421,7 +498,7 @@ class WritingAgent:
             elif blocking:
                 rev = revise(best_text, best_report.review, self.client, plan,
                              cfg=self.config, max_rounds=1, extra_system=story_review,
-                             min_severity=0.6, max_items=8)
+                             min_severity=0.45, max_items=8)
             elif any(i.text for i in best_report.review.issues):
                 # 只剩低严重度问题（0.3~0.6）：也走逐句替换——比整篇重写便宜且能定位
                 rev = revise(best_text, best_report.review, self.client, plan,
@@ -444,6 +521,9 @@ class WritingAgent:
                                          applied=rev.applied,
                                          note=(rev.notes[0] if rev.notes else ""),
                                          with_gate=not self.gate_final_only or cheap_gate)
+            rec.note = "改前 rank=%s → 改后 rank=%s%s" % (
+                before_rank, rec.rank(), ("；" + rec.note) if rec.note else "")
+            phase_b_revisions += 1
             history.append(rec)
             if rec.rank() < best_rec.rank():
                 best_rec, best_text, best_report, best_gate = rec, rev.text, rep, gate
@@ -468,7 +548,8 @@ class WritingAgent:
             rec2, rep2, _unused = self._grade(best_text, label="定稿",
                                               rnd=best_rec.round, with_gate=False)
             rec2.gate_status = best_gate.status
-            rec2.note = "定稿后重跑分析（%d 次闸门）" % gate_passes
+            rec2.note = ("定稿后重跑分析（%d 次闸门）" % gate_passes) + (
+                ("；" + best_rec.note) if best_rec.note else "")
             try:
                 history[history.index(best_rec)] = rec2  # 原地替换，保持轨迹条数与选中下标不变
             except ValueError:
@@ -480,8 +561,12 @@ class WritingAgent:
                 stop = "定稿仍未过闸门：%s" % (best_gate.verdict or best_gate.status)
 
         notes = ["候选 %d 个，选中「%s」" % (len(pool), source_label),
+                 "两阶段：Phase A 出完 %d 个候选（零修订）；Phase B 修订 %d 次"
+                 % (len(pool), phase_b_revisions),
                  "轨迹 %d 条，定稿 rank=%s（闸门,阻断,问题数,池距）" % (len(history), best_rec.rank())]
         notes.extend(pack.notes)
+        if write_names:
+            notes.append("写作规范不内联：要求 load_skill 载入 %s" % "、".join(write_names))
         if from_path:
             notes.append("已按 --from 续写模式生成（前文尾部 3000 字进提示）")
         if refs:
@@ -502,11 +587,16 @@ class WritingAgent:
                              chosen=chosen, stop_reason=stop,
                              candidates=len(pool),
                              gate=best_gate if self.gate_cmd else None,
-                             analysis=best_report.as_dict(), skills=pack.manifest(),
+                             analysis=best_report.as_dict(),
+                             skills=pack.manifest() + [
+                                 {"name": n, "version": "", "present": True,
+                                  "role": "要求载入（额外）", "selected": False}
+                                 for n in self.skill_names],
                              notes=notes, tool_steps=tool_steps)
         if deliver_kind:
             try:
-                text_out = build_deliverable(deliver_kind, pack, brief, self.client)
+                text_out = build_deliverable(deliver_kind, pack, brief, self.client,
+                                              toolbox=self.toolbox)
                 result.deliverables[deliver_kind] = text_out
                 result.notes.append("已生成 %s 资料（%d 字）" % (deliver_kind, len(text_out)))
             except InkSoulError as exc:
