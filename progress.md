@@ -129,3 +129,13 @@ logging_setup / cli（6 子命令）/ data/verbs_zh.txt
 - GitHub Packages：先 DELETE 旧 `0.7.0-rc.3`（version id `1565066943`，http 204），再重发成功。该 registry 只认 scoped 名——无 scope 的 `PUT /dsh-inksoul` 返回 404，故发布副本的 `package.json` `name` 改写为 `@katiusu/dsh-inksoul` 后打包发布，仓库内文件未改。新版本 id `1566405628`，created_at `2026-11-15T03:42:42Z`。
 - npmjs：`npm publish ... --tag next` 报 `EOTP`（账号要求一次性密码），未发布；`dist-tags` 仍为 `latest 0.6.1`。
 - `/root/.npmrc` 换用新 granular token（600），`npm whoami` = `katiusu`；备份 `/root/.npmrc.bak-20261115`。GitHub 专用配置在 `/root/.npmrc.gh`，不覆盖 npmjs 配置。
+
+## 0.7.0-rc.3 · npmjs 发布（可信发布 / OIDC，2026-11-15）
+
+首次通过 GitHub Actions OIDC 可信发布把 `dsh-inksoul@0.7.0-rc.3` 发到 npmjs，全程无 token、无 OTP。
+
+- workflow：`.github/workflows/publish.yml`（commit `309957f`），`workflow_dispatch` + `permissions: id-token: write`，`npm publish --tag <input> --access public`，不注入任何 token
+- npm 侧配置：Trusted Publisher = GitHub Actions / `katiusu` / `inksoul` / `publish.yml` / environment 留空
+- CI 现场重打包（`prepack` 跑 `sync-python.sh`），shasum `2979b73f61aa7aaeca83c74b5763409a188652bc`；本地 tgz 是 `4c18c34077f68fe62c580a71253895ad757e0d25`（时间戳不同，内容等价）
+- 结果：`dist-tags` = `latest 0.6.1` + `next 0.7.0-rc.3`；39 entries；包内 README 143 行、不含「情色」「六档」；provenance 已生成，`/-/npm/v1/attestations/dsh-inksoul@0.7.0-rc.3`
+- registry 有约 90 秒 processing 延迟，发布后立刻 `npm view` 会返回旧 dist-tags，需轮询或直接打 `https://registry.npmjs.org/dsh-inksoul`
