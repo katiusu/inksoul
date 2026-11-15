@@ -1,0 +1,34 @@
+name: dist-tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "version to point the tag at"
+        required: true
+        default: "0.7.0-rc.3"
+      tag:
+        description: "dist-tag name"
+        required: true
+        default: "latest"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  retag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: OIDC exchange then PUT dist-tag
+        run: |
+          set -euo pipefail
+          ID=$(curl -s -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" | python3 -c "import json,sys;print(json.load(sys.stdin)['value'])")
+          RES=$(curl -s -X POST -H "Authorization: Bearer ${ID}" "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/dsh-inksoul" || true)
+          echo "EXCHANGE_RESP: $(printf %s "$RES" | head -c 400)"
+          TOKEN=$(printf %s "$RES" | python3 -c "import json,sys;print(json.load(sys.stdin).get('token',''))" || true)
+          if [ -z "$TOKEN" ]; then echo "NO_TOKEN_FROM_EXCHANGE"; exit 1; fi
+          echo "GOT_TOKEN_LEN=${#TOKEN}"
+          CODE=$(curl -s -o /tmp/out -w "%{http_code}" -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" --data-binary '"${{ inputs.version }}"' "https://registry.npmjs.org/-/package/dsh-inksoul/dist-tags/${{ inputs.tag }}")
+          echo "PUT_HTTP=$CODE"
+          cat /tmp/out; echo
