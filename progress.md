@@ -123,3 +123,9 @@ logging_setup / cli（6 子命令）/ data/verbs_zh.txt
 - 同步修 `dsh-flash-presets`（v1/v2/v3 三个 preset + 合成产物）：同款 shim 挂成 `dsh-flash-presets/list-agents-compat`，compose-bundle-patch.mjs --check 一致（12314 字符 / 12762 字节）。
 - 版本三处：package.json 0.7.0-rc.3、pyproject.toml 与 src/inksoul/__init__.py 0.7.0rc3；dsh.engines.dsh 保持 >=0.2.0-rc.1（0.2.1 与 0.2.2 都在范围内）。
 - 测试：268 passed；npm pack 39 files / 150301 字节。
+## 0.7.0-rc.3 · README 表述调整与双 registry 发布（2026-11-15）
+- README 语域表删去一档，呈现为五档（文学书面/口语都市/爽文快推/冷硬悬疑/场景速写）；`REGISTER_ALIASES` 与 CLI `--register` 帮助文本不变，旧名仍可用。`grep -c 情色 README.md` = 0，行数 143。
+- `npm pack` 39 files / 151587 字节，sha256 `20f13a4c103ed46aaf67dc57c770655f391127282906a1063e8a60c942235e40`；包内 README 143 行、`__pycache__` 0 个、版本 0.7.0-rc.3。
+- GitHub Packages：先 DELETE 旧 `0.7.0-rc.3`（version id `1565066943`，http 204），再重发成功。该 registry 只认 scoped 名——无 scope 的 `PUT /dsh-inksoul` 返回 404，故发布副本的 `package.json` `name` 改写为 `@katiusu/dsh-inksoul` 后打包发布，仓库内文件未改。新版本 id `1566405628`，created_at `2026-11-15T03:42:42Z`。
+- npmjs：`npm publish ... --tag next` 报 `EOTP`（账号要求一次性密码），未发布；`dist-tags` 仍为 `latest 0.6.1`。
+- `/root/.npmrc` 换用新 granular token（600），`npm whoami` = `katiusu`；备份 `/root/.npmrc.bak-20261115`。GitHub 专用配置在 `/root/.npmrc.gh`，不覆盖 npmjs 配置。
